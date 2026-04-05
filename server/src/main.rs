@@ -1,15 +1,11 @@
 use simple_websockets::{Event, Message, Responder};
 use std::{collections::HashMap, env};
+
+mod blocks;
+mod object_relations;
 mod agent_type;
 
 const DEFAULT_PORT: u16 = 8080;
-
-struct Block {
-    x: i32,
-    y: i32,
-    z: i32,
-    block_type: String,
-}
 
 fn broadcast_message(sender: u64, message: &Message, clients: &HashMap<u64, Responder>) {
     // Iterate through all connected clients and send the message to each one except the sender
@@ -20,18 +16,27 @@ fn broadcast_message(sender: u64, message: &Message, clients: &HashMap<u64, Resp
     }
 }
 
-fn main() {
+fn create_database() -> object_relations::ORM {
     // Read the database path from the environment variable, or use in memory if not set
-    let db_conn = match env::var("DATABASE_URL") {
+    let database_url = match env::var("DATABASE_URL") {
         Ok(val) => {
             println!("Using database at path: {}", val);
-            rusqlite::Connection::open(val).expect("Failed to open database")
+            Some(val)
         },
         Err(_) => {
             println!("No database path provided, using in-memory database.");
-            rusqlite::Connection::open_in_memory().expect("Failed to open in-memory database")
+            None
         },
     };
+
+    let database = object_relations::ORM::new(database_url);
+    database.create_tables().expect("Failed to create database tables");
+    database
+}
+
+fn main() {
+    // Initialize the database connection and create the necessary tables
+    let database = create_database();
 
     // Read the default port from the environment variable, or use 8080 if not set
     let port = match env::var("SERVER_PORT") {

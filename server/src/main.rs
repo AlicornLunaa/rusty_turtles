@@ -1,6 +1,8 @@
 use simple_websockets::{Event, Message, Responder};
 use std::{collections::HashMap, env};
 
+use agent_type::AgentType;
+
 mod blocks;
 mod object_relations;
 mod agent_type;
@@ -47,24 +49,66 @@ fn main() {
 
     // Start the WebSocket server on the specified port and obtain a map of connected clients
     let event_hub = simple_websockets::launch(port).expect(&format!("Failed to launch on port {}", port));
+    let mut waiting_room: HashMap<u64, Responder> = HashMap::new(); // A temporary map to hold clients until their agent type is determined
     let mut clients: HashMap<u64, Responder> = HashMap::new();
+    let mut temp_agent_type: HashMap<u64, AgentType> = HashMap::new();
 
     // Enter the main event loop to handle incoming WebSocket events
     loop {
         match event_hub.poll_event() {
             Event::Connect(client_id, responder) => {
                 println!("A client connected with id #{}, determining agent type...", client_id);
-                clients.insert(client_id, responder);
+                waiting_room.insert(client_id, responder);
             },
             Event::Disconnect(client_id) => {
                 println!("Client #{} disconnected.", client_id);
+                waiting_room.remove(&client_id);
                 clients.remove(&client_id);
+                temp_agent_type.remove(&client_id);
             },
             Event::Message(client_id, message) => {
-                println!("Received a message from client #{}: {:?}", client_id, message);
+                // Check if the client is still in the waiting room (i.e., we haven't determined their agent type yet)
+                if waiting_room.contains_key(&client_id) {
+                    println!("Received a message from client #{} in waiting room: {:?}", client_id, message);
 
-                let responder = clients.get(&client_id).unwrap();
-                responder.send(message);
+                    let responder = waiting_room.remove(&client_id).unwrap();
+                    let agent_type_string = match message {
+                        Message::Text(text) => text,
+                        _ => {
+                            println!("Invalid message type from client #{}: expected text, got {:?}", client_id, message);
+                            continue;
+                        }
+                    }.trim().to_lowercase();
+
+                    match agent_type_string.as_str() {
+                        "turtle" => {
+                            println!("Client #{} identified as a turtle agent.", client_id);
+                            clients.insert(client_id, responder);
+                            temp_agent_type.insert(client_id, AgentType::Turtle);
+                        },
+                        "client" => {
+                            println!("Client #{} identified as a client agent.", client_id);
+                            clients.insert(client_id, responder);
+                            temp_agent_type.insert(client_id, AgentType::Client);
+                        },
+                        _ => {
+                            println!("Unknown agent type '{}' from client #{}. Disconnecting.", agent_type_string, client_id);
+                            responder.send(Message::Text("unknown_agent_type".to_string()));
+                            responder.close();
+                        }
+                    }
+                } else if clients.contains_key(&client_id) {
+                    println!("Received a message from client #{}: {:?}", client_id, message);
+                    let responder = clients.get(&client_id).unwrap();
+                    let agent_type = temp_agent_type.get(&client_id).unwrap();
+
+                    // Respond to the message based on the agent type as an echo + agent type prefix
+                    let response = match agent_type {
+                        AgentType::Turtle => Message::Text(format!("turtle_agent_echo: {:?}", message)),
+                        AgentType::Client => Message::Text(format!("client_agent_echo: {:?}", message)),
+                    };
+                    responder.send(response);
+                }
             },
         }
     }

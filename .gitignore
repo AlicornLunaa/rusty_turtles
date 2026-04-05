@@ -7,3 +7,6 @@ Cargo.lock
 *.luac
 .luarocks/
 luac.out
+
+# Runtime files
+.env

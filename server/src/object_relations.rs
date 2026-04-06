@@ -1,6 +1,7 @@
 /// This file contains the ORM for the server, it sits as an abstraction layer between SQLite and custom data types
 use rusqlite::{Connection, Result, params};
 use super::blocks::{Block, Chest};
+use super::turtle::Turtle;
 
 pub struct ORM {
     conn: Connection,

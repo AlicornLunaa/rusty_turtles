@@ -12,7 +12,7 @@ and will hold a local cache of coordinates and rotation. It will manage the dead
 Dead-reckoning will be used when there is no in-game GPS setup for the turtles.
 
 ## Goals:
-1. [ ] Setup server communications, registering/dropping clients
+1. [x] Setup server communications, registering/dropping clients
 2. [ ] Setup database memory system
 3. [ ] Create virtual turtle initializer and destroyer
 4. [ ] Create dead-reckoning system for turtles

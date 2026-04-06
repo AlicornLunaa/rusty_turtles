@@ -1,4 +1,4 @@
 local vturtle = require("vturtle")
 vturtle.init()
-sleep(2)
+vturtle.update_spatial_vars(1, 0, 0, 1)
 vturtle.cleanup()

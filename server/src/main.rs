@@ -1,11 +1,14 @@
+use serde_json::Value;
 use simple_websockets::{Event, Message, Responder};
 use std::{collections::HashMap, env};
 
-use agent_type::AgentType;
+use agent::AgentType;
+
+use crate::agent::{TurtleMessage, TurtleOpCode};
 
 mod blocks;
 mod object_relations;
-mod agent_type;
+mod agent;
 
 const DEFAULT_PORT: u16 = 8080;
 
@@ -14,6 +17,32 @@ fn broadcast_message(sender: u64, message: &Message, clients: &HashMap<u64, Resp
     for (client_id, responder) in clients.iter() {
         if *client_id != sender {
             responder.send(message.clone());
+        }
+    }
+}
+
+fn handle_payload(text: &str) -> TurtleMessage {
+    let msg: Vec<Value> = serde_json::from_str(text).unwrap();
+
+    let opcode = msg.get(0)
+        .and_then(Value::as_u64)
+        .expect("opcode must be a number");
+
+    let opcode = TurtleOpCode::try_from(opcode)
+        .expect("unknown opcode");
+
+    match opcode {
+        TurtleOpCode::UpdatePosition => {
+            let x = msg.get(1).and_then(Value::as_i64).unwrap();
+            let y = msg.get(2).and_then(Value::as_i64).unwrap();
+            let z = msg.get(3).and_then(Value::as_i64).unwrap();
+            println!("update position: {}, {}, {}", x, y, z);
+            TurtleMessage::PositionUpdate { x, y, z }
+        },
+        TurtleOpCode::UpdateRotation => {
+            let rotation = msg.get(1).and_then(Value::as_i64).unwrap() as i8;
+            println!("rotate: {}", rotation);
+            TurtleMessage::RotationUpdate { rotation }
         }
     }
 }
@@ -102,12 +131,25 @@ fn main() {
                     let responder = clients.get(&client_id).unwrap();
                     let agent_type = temp_agent_type.get(&client_id).unwrap();
 
-                    // Respond to the message based on the agent type as an echo + agent type prefix
-                    let response = match agent_type {
-                        AgentType::Turtle => Message::Text(format!("turtle_agent_echo: {:?}", message)),
-                        AgentType::Client => Message::Text(format!("client_agent_echo: {:?}", message)),
-                    };
-                    responder.send(response);
+                    // Handle the message based on the agent type and broadcast it to other clients
+                    match agent_type {
+                        AgentType::Turtle => {
+                            let raw_data = match message {
+                                Message::Text(text) => text,
+                                _ => {
+                                    println!("Invalid message type from client #{}: expected text, got {:?}", client_id, message);
+                                    continue;
+                                }
+                            };
+                            let turtle_message = handle_payload(raw_data.trim());
+                            println!("Processed turtle message from client #{}: {:?}", client_id, turtle_message);
+                        },
+                        AgentType::Client => {
+                            // For client agents, we can implement different message handling logic if needed
+                            println!("Received a message from a client agent #{}: {:?}", client_id, message);
+                            responder.send(message);
+                        }
+                    }
                 }
             },
         }

@@ -15,12 +15,17 @@ local vturtle = {
 		print("Connected to server and identified as turtle")
 		return true
 	end,
+
 	cleanup = function()
 		if ws then
 			ws.close()
 			print("Closed connection to server")
 		end
 	end,
+
+	is_connected = function()
+		return ws ~= nil
+	end
 }
 
 return vturtle

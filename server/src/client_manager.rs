@@ -55,8 +55,6 @@ impl ClientManager {
     }
 
     pub fn remove_client(&mut self, client_id: u64) {
-        println!("Client #{} disconnected.", client_id);
-
         if let Some(responder) = self.get_responder(client_id) {
             responder.close();
         }

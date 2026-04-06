@@ -11,6 +11,14 @@ Turtles will be controlled via an interface layer in Lua. This interface will be
 and will hold a local cache of coordinates and rotation. It will manage the dead-reckoning system.
 Dead-reckoning will be used when there is no in-game GPS setup for the turtles.
 
+## Atomic movement tracking:
+1. Create intent file
+2. Move
+3. If successful or unsuccessful, remove intent file and handle position accordingly
+4. If intent file already exists, request help
+5. Server broadcasts task for hosting GPS
+6. Turtle obtains GPS from other known good turtles
+
 ## Goals:
 1. [x] Setup server communications, registering/dropping clients
 2. [ ] Setup database memory system

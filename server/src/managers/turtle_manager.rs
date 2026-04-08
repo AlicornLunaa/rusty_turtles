@@ -1,9 +1,11 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
+
+use tokio::sync::Mutex;
 
 use crate::turtle::Turtle;
 
 pub struct TurtleManager {
-    turtles: HashMap<u64, Turtle>,
+    turtles: HashMap<u64, Arc<Mutex<Turtle>>>,
     next_id: u64,
 }
 
@@ -15,7 +17,7 @@ impl TurtleManager {
         }
     }
 
-    pub fn add_turtle(&mut self, turtle: Turtle) -> u64 {
+    pub fn add_turtle(&mut self, turtle: Arc<Mutex<Turtle>>) -> u64 {
         let id = self.next_id;
         self.turtles.insert(id, turtle);
         self.next_id += 1;
@@ -26,19 +28,19 @@ impl TurtleManager {
         self.turtles.remove(&id).is_some()
     }
 
-    pub fn get_turtle(&self, id: u64) -> Option<&Turtle> {
+    pub fn get_turtle(&self, id: u64) -> Option<&Arc<Mutex<Turtle>>> {
         self.turtles.get(&id)
     }
 
-    pub fn get_turtle_mut(&mut self, id: u64) -> Option<&mut Turtle> {
+    pub fn get_turtle_mut(&mut self, id: u64) -> Option<&mut Arc<Mutex<Turtle>>> {
         self.turtles.get_mut(&id)
     }
 
-    pub fn iter_turtles(&self) -> impl Iterator<Item = (&u64, &Turtle)> {
+    pub fn iter_turtles(&self) -> impl Iterator<Item = (&u64, &Arc<Mutex<Turtle>>)> {
         self.turtles.iter()
     }
 
-    pub fn iter_turtles_mut(&mut self) -> impl Iterator<Item = (&u64, &mut Turtle)> {
+    pub fn iter_turtles_mut(&mut self) -> impl Iterator<Item = (&u64, &mut Arc<Mutex<Turtle>>)> {
         self.turtles.iter_mut()
     }
 }

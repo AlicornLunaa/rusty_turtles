@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 use crate::managers::block_manager::BlockManager;
 use crate::managers::turtle_manager::TurtleManager;
 use crate::object_relations::ORM;
-use crate::turtle::{Turtle, TurtleError, VirtualTurtle};
+use crate::turtle::{Turtle, VirtualTurtle};
 
 mod object_relations;
 mod managers;
@@ -64,7 +64,6 @@ async fn create_socket_server() -> TcpListener {
     println!("Starting server on port {}", port);
 
     // Start the WebSocket server on the specified port and obtain a map of connected clients
-    // simple_websockets::launch(port).expect(&format!("Failed to launch on port {}", port))
     let listener: TcpListener = TcpListener::bind("127.0.0.1:8080").await.expect("Failed to bind to port 8080");
     listener
 }
@@ -79,26 +78,50 @@ async fn main() {
     // Testing loop
     let manager = Arc::clone(&turtle_manager);
     tokio::spawn(async move {
+        // Spawn a thread which every 10 seconds spawns a thread to communicate with turtles
         loop {
-            let mut turtles_to_remove: HashSet<u64> = HashSet::new();
+            let turtles_to_remove = Arc::new(Mutex::new(HashSet::new()));
+            let mut handles = Vec::new();
 
             for (id, turtle) in manager.lock().await.iter_turtles_mut() {
-                if !turtle.is_valid().await {
-                    println!("Turtle {id} is invalid.");
-                    turtles_to_remove.insert(*id);
+                if !turtle.lock().await.is_valid().await {
+                    turtles_to_remove.lock().await.insert(*id);
                     continue;
                 }
 
-                for i in 0..4 {
-                    turtle.forward().await.unwrap_or_else(|e| { if let TurtleError::SocketError(_) = e { turtles_to_remove.insert(*id); }});
-                    turtle.turn_left().await.unwrap_or_else(|e| { if let TurtleError::SocketError(_) = e { turtles_to_remove.insert(*id); }});
-                }
+                let turtle = Arc::clone(turtle);
+                let turtle_id = *id;
+                let turtles_to_remove_inner = Arc::clone(&turtles_to_remove);
+                
+                let action = async move {
+                    let mut turtle_lock = turtle.lock().await;
+
+                    for _ in 0..4 {
+                        if let Err(_) = turtle_lock.forward().await { break; }
+                        if let Err(_) = turtle_lock.turn_left().await { break; }
+                    }
+
+                    if !turtle_lock.is_valid().await {
+                        turtles_to_remove_inner.lock().await.insert(turtle_id);
+                    }
+                };
+
+                handles.push(action);
+            }
+            
+            // Run all turtle actions concurrently
+            futures_util::future::join_all(handles).await;
+
+            // Remove turtles marked as invalid
+            let mut manager = manager.lock().await;
+            let mut turtles_to_remove = turtles_to_remove.lock().await;
+
+            for i in turtles_to_remove.iter() {
+                println!("Removing turtle {i}");
+                manager.remove_turtle(*i);
             }
 
-            for i in turtles_to_remove {
-                println!("Removing turtle {i}");
-                manager.lock().await.remove_turtle(i);
-            }
+            turtles_to_remove.clear();
 
             tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
         }
@@ -122,7 +145,7 @@ async fn main() {
                         // Simple text answer, either "turtle" or "client" for now.
                         match message.to_text().unwrap().trim().to_lowercase().as_str() {
                             "turtle" => {
-                                let turtle = Turtle::new(ws_stream).await.unwrap();
+                                let turtle = Arc::new(Mutex::new(Turtle::new(ws_stream).await.unwrap()));
                                 turtle_manager.lock().await.add_turtle(turtle);
                             },
                             "client" => todo!(),

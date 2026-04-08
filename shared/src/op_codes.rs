@@ -1,4 +1,6 @@
-// Opcodes
+use serde::{Deserialize, Serialize};
+
+// Opcodes for turtles, this one needs numbers because it's sent to a lua system
 #[derive(Debug)]
 pub enum TurtleOpCode {
     UpdatePosition = 0,
@@ -17,4 +19,10 @@ impl TryFrom<u64> for TurtleOpCode {
             _ => Err(()),
         }
     }
+}
+
+// Opcodes for clients
+#[derive(Serialize, Deserialize, Debug)]
+pub enum ClientOpCode {
+    GetBlocks,
 }

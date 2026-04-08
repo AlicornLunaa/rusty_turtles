@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use macroquad::prelude::*;
 use macroquad::ui::{root_ui, hash};
 use shared::blocks::BlockNotification;
+use shared::op_codes::ClientOpCode;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{connect, Message};
 use url::Url;
@@ -20,8 +21,9 @@ async fn main() {
         _ => Ok(()),
     }.expect("Failed to set non-blocking");
 
-    // Send a message
+    // Send a client qualifier and then ask for all blocks
     socket.send(Message::Text("client".into())).unwrap();
+    socket.send(Message::Text(serde_json::to_string(&ClientOpCode::GetBlocks).unwrap().into())).unwrap();
 
     let mut blocks: HashMap<(i64, i64, i64), String> = HashMap::new();
 

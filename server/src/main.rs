@@ -1,12 +1,14 @@
+use std::sync::Arc;
 use std::{env, rc::Rc};
-use shared::op_codes::TurtleOpCode;
-use simple_websockets::{Event, EventHub, Message};
-use serde_json::Value;
+use futures_util::StreamExt;
+use tokio::net::TcpListener;
+use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::Message;
 
 use crate::managers::block_manager::BlockManager;
-use crate::managers::client_manager::{AgentType, ClientManager};
+use crate::managers::turtle_manager::TurtleManager;
 use crate::object_relations::ORM;
-use crate::behaviors::{PositionUpdate, RotationUpdate, TurtleMessage};
+use crate::turtle::{Direction, Turtle};
 
 mod managers;
 mod object_relations;
@@ -15,8 +17,12 @@ mod behaviors;
 
 const DEFAULT_PORT: u16 = 8080;
 
+pub enum AgentType {
+    Turtle,
+    Client,
+}
+
 pub struct AppState {
-    pub client_manager: ClientManager,
     pub block_manager: BlockManager,
     pub database: Rc<ORM>,
 }
@@ -25,7 +31,6 @@ impl AppState {
         let database = Rc::new(database);
 
         AppState {
-            client_manager: ClientManager::new(),
             block_manager: BlockManager::new(database.clone()),
             database: database,
         }
@@ -50,7 +55,7 @@ fn create_database() -> object_relations::ORM {
     database
 }
 
-fn create_socket_server() -> EventHub {
+async fn create_socket_server() -> TcpListener {
     // Read the default port from the environment variable, or use 8080 if not set
     let port = match env::var("SERVER_PORT") {
         Ok(val) => val.parse::<u16>().unwrap_or(DEFAULT_PORT),
@@ -59,130 +64,51 @@ fn create_socket_server() -> EventHub {
     println!("Starting server on port {}", port);
 
     // Start the WebSocket server on the specified port and obtain a map of connected clients
-    simple_websockets::launch(port).expect(&format!("Failed to launch on port {}", port))
+    // simple_websockets::launch(port).expect(&format!("Failed to launch on port {}", port))
+    let listener: TcpListener = TcpListener::bind("127.0.0.1:8080").await.expect("Failed to bind to port 8080");
+    listener
 }
 
-fn handle_payload(text: &str) -> Box<dyn TurtleMessage> {
-    let msg: Vec<Value> = serde_json::from_str(text).unwrap();
-
-    let opcode = msg.get(0)
-        .and_then(Value::as_u64)
-        .expect("opcode must be a number");
-
-    let opcode = TurtleOpCode::try_from(opcode)
-        .expect("unknown opcode");
-
-    match opcode {
-        TurtleOpCode::UpdatePosition => {
-            let x = msg.get(1).and_then(Value::as_i64).unwrap();
-            let y = msg.get(2).and_then(Value::as_i64).unwrap();
-            let z = msg.get(3).and_then(Value::as_i64).unwrap();
-            println!("update position: {}, {}, {}", x, y, z);
-            Box::new(PositionUpdate { x, y, z })
-        },
-        TurtleOpCode::UpdateRotation => {
-            let rotation = msg.get(1).and_then(Value::as_i64).unwrap() as i8;
-            println!("rotate: {}", rotation);
-            Box::new(RotationUpdate { rotation })
-        },
-        TurtleOpCode::BlockUpdate => {
-            let block_type = msg.get(1).and_then(Value::as_str).unwrap();
-            let x = msg.get(2).and_then(Value::as_i64).unwrap();
-            let y = msg.get(3).and_then(Value::as_i64).unwrap();
-            let z = msg.get(4).and_then(Value::as_i64).unwrap();
-            println!("block update: {}, {}, {} -> {}", x, y, z, block_type);
-            Box::new(behaviors::BlockUpdate { x, y, z, block_type: block_type.to_string() })
-        },
-    }
-}
-
-fn main() {
+#[tokio::main]
+async fn main() {
     // Initialize the database and the WebSocket server
     let mut app_state = AppState::new(create_database());
-    let event_hub = create_socket_server();
+    let turtle_manager = Arc::new(Mutex::new(TurtleManager::new()));
+    let listener = create_socket_server().await;
 
-    // Enter the main event loop to handle incoming WebSocket events
+    // Main loop to accept incoming connections and spawn a new task for each one
     loop {
-        match event_hub.poll_event() {
-            Event::Connect(client_id, responder) => {
-                println!("A client connected with id #{}, determining agent type...", client_id);
-                app_state.client_manager.add_to_waiting_room(client_id, responder);
-            },
-            Event::Disconnect(client_id) => {
-                println!("Client #{} disconnected.", client_id);
-                app_state.client_manager.remove_client(client_id);
-            },
-            Event::Message(client_id, message) => {
-                // Check if the client is still in the waiting room (i.e., we haven't determined their agent type yet)
-                if app_state.client_manager.is_waiting(client_id) {
-                    println!("Received a message from client #{} in waiting room: {:?}", client_id, message);
+        let (stream, addr) = listener.accept().await.expect("Failed to accept connection");
+        let turtle_manager = Arc::clone(&turtle_manager);
 
-                    let agent_type_string = match message {
-                        Message::Text(text) => text,
-                        _ => {
-                            println!("Invalid message type from client #{}: expected text, got {:?}", client_id, message);
-                            continue;
-                        }
-                    }.trim().to_lowercase();
+        println!("New client connected from {}, determining type", addr);
 
-                    match agent_type_string.as_str() {
-                        "turtle" => {
-                            println!("Client #{} identified as a turtle agent.", client_id);
-                            app_state.client_manager.qualify_agent(client_id, AgentType::Turtle).unwrap();
-                        },
-                        "client" => {
-                            println!("Client #{} identified as a client agent.", client_id);
-                            app_state.client_manager.qualify_agent(client_id, AgentType::Client).unwrap();
-                        },
-                        _ => {
-                            println!("Unknown agent type '{}' from client #{}. Disconnecting.", agent_type_string, client_id);
-                            app_state.client_manager.send(client_id, Message::Text("unknown_agent_type".into())).unwrap();
-                            app_state.client_manager.remove_client(client_id);
-                        }
-                    }
-                } else {
-                    println!("Received a message from client #{}: {:?}", client_id, message);
-                    let agent_type = app_state.client_manager.get_agent_type(client_id);
+        tokio::spawn(async move {
+            // Accept the WebSocket connection and split it into a sender and receiver
+            let mut ws_stream = tokio_tungstenite::accept_async(stream).await.expect("Failed to accept WebSocket connection");
+            println!("WebSocket connection established with {}", addr);
 
-                    // Handle the message based on the agent type and broadcast it to other clients
-                    match agent_type {
-                        Some(AgentType::Turtle) => {
-                            let raw_data = match message {
-                                Message::Text(text) => text,
-                                _ => {
-                                    println!("Invalid message type from client #{}: expected text, got {:?}", client_id, message);
-                                    continue;
-                                }
-                            };
-                            let turtle_message = handle_payload(raw_data.trim());
-                            let res = turtle_message.handle_message(client_id, &mut app_state);
-
-                            if let Err(err) = res {
-                                println!("Error handling message from client #{}: {}", client_id, err);
-                                continue;
+            if let Some(response) = ws_stream.next().await {
+                match response {
+                    Ok(message) => {
+                        // Simple text answer, either "turtle" or "client" for now.
+                        match message.to_text().unwrap() {
+                            "turtle" => {
+                                let turtle = Turtle::new(ws_stream).await.unwrap();
+                                turtle_manager.lock().await.add_turtle(turtle);
+                            },
+                            "client" => todo!(),
+                            _ => {
+                                eprintln!("Failed to select correct agent");
+                                return;
                             }
-                        },
-                        Some(AgentType::Client) => {
-                            // For client agents, we can implement different message handling logic if needed
-                            println!("Received a message from a client agent #{}: {:?}", client_id, message);
-                            app_state.client_manager.send(client_id, message).unwrap();
                         }
-                        None => {
-                            println!("Received a message from an unidentified client #{}. Ignoring.", client_id);
-                        },
-                    }
+                    },
+                    Err(e) => {
+                        eprintln!("Failed to initialize client. {e}");
+                    },
                 }
-            },
-        }
-
-        // Notify all clients of the current state of the world (e.g., block updates, turtle positions, etc.)
-        while app_state.block_manager.is_notification_pending() {
-            let update = app_state.block_manager.pop_notification();
-            let message = serde_json::to_string(&update).unwrap();
-
-            app_state.client_manager.get_visualizer_clients().iter().for_each(|(_, responder)| {
-                responder.send(Message::Text(message.clone()));
-            });
-        }
+            }
+        });
     }
 }

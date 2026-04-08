@@ -1,0 +1,32 @@
+use std::collections::HashMap;
+
+use crate::turtle::Turtle;
+
+pub struct TurtleManager {
+    turtles: HashMap<u64, Turtle>,
+    next_id: u64,
+}
+
+impl TurtleManager {
+    pub fn new() -> Self {
+        Self {
+            turtles: HashMap::new(),
+            next_id: 0,
+        }
+    }
+
+    pub fn add_turtle(&mut self, turtle: Turtle) -> u64 {
+        let id = self.next_id;
+        self.turtles.insert(id, turtle);
+        self.next_id += 1;
+        id
+    }
+
+    pub fn get_turtle(&self, id: u64) -> Option<&Turtle> {
+        self.turtles.get(&id)
+    }
+
+    pub fn get_turtle_mut(&mut self, id: u64) -> Option<&mut Turtle> {
+        self.turtles.get_mut(&id)
+    }
+}

@@ -11,6 +11,10 @@ Turtles will be controlled via an interface layer in Lua. This interface will be
 and will hold a local cache of coordinates and rotation. It will manage the dead-reckoning system.
 Dead-reckoning will be used when there is no in-game GPS setup for the turtles.
 
+There will be a job queue and a task pool. A turtle at IDLE will consume a job, once a job is active it will start chipping away at the tasks.
+The turtle marks each task as complete and the server will mark each job as complete if every task is finished.
+Each task is just what I call an ActionStack, or a list of actual actions to take with the turtle.
+
 ## Atomic movement tracking:
 1. Create intent file
 2. Move
@@ -34,6 +38,24 @@ Dead-reckoning will be used when there is no in-game GPS setup for the turtles.
     - Swarm: Combines strip mining with a reproduction state
     - Idle: does nothing
     - RC: Turtle is being remotely controlled
+
+## Turtle operations
+- 0x01 handshake (fuel level) -> ()
+- 0x02 telemetry update (x, y, z) -> ()
+- 0x03 block update (x, y, z, block) -> ()
+- 0x04 task consume () -> (task id)
+- 0x05 task complete (task id)
+- 0x06 job consume () -> (job id)
+- 0x07 abort () -> ()
+
+### Tasks
+- MoveTo(x, y, z)
+- Dig(x, y, z)
+- Craft(items[9])
+- Place(x, y, z, block)
+- Drop(x, y, z, item)
+- Suck(x, y, z)
+- Refuel()
 
 ## Project structure
 `./server/` contains the API server which manages all the turtles.  

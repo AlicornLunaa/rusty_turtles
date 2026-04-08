@@ -2,8 +2,8 @@ use std::{fmt, sync::Arc};
 
 use serde_json::{Value, json};
 use tokio::{net::TcpStream, sync::{Mutex, mpsc, oneshot}, task::JoinHandle};
-use tokio_tungstenite::{WebSocketStream, tungstenite::{Error, Message}};
-use futures_util::{SinkExt, StreamExt, TryStreamExt, stream::SplitSink};
+use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
+use futures_util::{SinkExt, StreamExt};
 
 /// Enums representing various parameters for turtle operations.
 #[derive(Clone, Debug)]
@@ -109,10 +109,10 @@ impl Turtle {
     pub async fn new(ws_stream: WebSocketStream<TcpStream>) -> Result<Self, String> {
         // Obtain turtle information via questioning
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-        let mut x = 0;
-        let mut y = 0;
-        let mut z = 0;
-        let mut direction = Direction::NORTH;
+        let x;
+        let y;
+        let z;
+        let direction: Direction;
 
         if let Err(e) = ws_sender.send(Message::Text(json!({ "action": "turtle_init", "args": [] }).to_string().into())).await {
             return Err(format!("Error with sending turtle init. {e}"));
@@ -121,9 +121,9 @@ impl Turtle {
         // Wait for the turtle's response
         if let Some(response) = ws_receiver.next().await {
             match response {
-                Ok(message) => {
+                Ok(Message::Text(text)) => {
                     // Deserialize the returned JSON
-                    let data: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+                    let data: Value = serde_json::from_str(&text).unwrap();
                     x = data["x"].as_i64().unwrap();
                     y = data["y"].as_i64().unwrap();
                     z = data["z"].as_i64().unwrap();
@@ -137,9 +137,15 @@ impl Turtle {
                         None => return Err("Invalid direction supplied from turtle.".to_string()),
                     }
                 },
+                Ok(Message::Close(_)) => {
+                    return Err(format!("Connection closed prematurely."));
+                },
                 Err(e) => {
                     eprintln!("Failed to initialize turtle. {e}");
                     return Err(format!("Failed to initialize turtle. {e}"));
+                },
+                _ => {
+                    return Err(format!("Issue with message."));
                 },
             }
         } else {
@@ -169,20 +175,21 @@ impl Turtle {
 
                         // Then wait for the response
                         match ws_receiver.next().await {
-                            Some(Ok(message)) => {
+                            Some(Ok(Message::Text(text))) => {
                                 // Actual response message
-                                if sender.send(Ok(message)).is_err() {
+                                if sender.send(Ok(Message::Text(text))).is_err() {
                                     break;
                                 }
                             },
-                            Some(Err(e)) => {
-                                // Error given by ws_receiver, client likely gone
-                                let _ = sender.send(Err(TurtleError::SocketError(e.to_string())));
-                                break;
+                            Some(Ok(Message::Binary(bin))) => {
+                                // Actual response message
+                                if sender.send(Ok(Message::Binary(bin))).is_err() {
+                                    break;
+                                }
                             },
-                            None => {
-                                // Socket is closed
-                                let _ = sender.send(Err(TurtleError::SocketError("Connection closed.".to_string())));
+                            _ => {
+                                // Error given by ws_receiver, client likely gone
+                                let _ = sender.send(Err(TurtleError::SocketError("Something went wrong with the oneshot channel.".to_string())));
                                 break;
                             },
                         }

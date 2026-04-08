@@ -73,43 +73,50 @@ function main()
     local SERVER_URL = "ws://localhost:8080"
     local ws = nil
 
-	print("Connecting to server at " .. SERVER_URL)
-	ws = http.websocket(SERVER_URL)
-
-	while not ws do
-		error("Failed to connect to server")
-        sleep(5) -- Wait before retrying
-        print("Retrying connection to server at " .. SERVER_URL)
+    local success, err = pcall(function()
+        print("Connecting to server at " .. SERVER_URL)
         ws = http.websocket(SERVER_URL)
-	end
-
-    -- Tell server we're a turtle
-    ws.send("turtle")
-    print("Connected to server at " .. SERVER_URL)
-
-    -- Main runtime to listen to commands from the server
-    while true do
-        local message, is_binary = ws.receive()
-
-        if message then
-            print("Received command: " .. message)
-            
-            local command = textutils.unserializeJSON(message)
-            handle_command(ws, command)
-        else
-            print("Connection to server lost. Attempting to reconnect...")
-            ws.close()
-            ws = nil
-
-            while not ws do
-                sleep(5) -- Wait before retrying
-                print("Retrying connection to server at " .. SERVER_URL)
-                ws = http.websocket(SERVER_URL)
-            end
-
-            print("Reconnected to server at " .. SERVER_URL)
-            ws.send("turtle")
+    
+        while not ws do
+            error("Failed to connect to server")
+            sleep(5) -- Wait before retrying
+            print("Retrying connection to server at " .. SERVER_URL)
+            ws = http.websocket(SERVER_URL)
         end
+    
+        -- Tell server we're a turtle
+        ws.send("turtle")
+        print("Connected to server at " .. SERVER_URL)
+    
+        -- Main runtime to listen to commands from the server
+        while true do
+            local message, is_binary = ws.receive()
+    
+            if message then
+                print("Received command: " .. message)
+                
+                local command = textutils.unserializeJSON(message)
+                handle_command(ws, command)
+            else
+                print("Connection to server lost. Attempting to reconnect...")
+                ws.close()
+                ws = nil
+    
+                while not ws do
+                    sleep(5) -- Wait before retrying
+                    print("Retrying connection to server at " .. SERVER_URL)
+                    ws = http.websocket(SERVER_URL)
+                end
+    
+                print("Reconnected to server at " .. SERVER_URL)
+                ws.send("turtle")
+            end
+        end
+    end )
+
+    -- Cleanup main
+    if ws ~= nil then
+        ws.close()
     end
 end
 

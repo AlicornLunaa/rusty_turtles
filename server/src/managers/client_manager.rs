@@ -1,6 +1,12 @@
 use std::collections::HashMap;
 use simple_websockets::{Message, Responder};
-use crate::{agent::AgentType, turtle::Turtle};
+use crate::turtle::Turtle;
+
+#[derive(Debug)]
+pub enum AgentType {
+    Turtle, // Computercraft Turtle
+    Client, // Visualizer program
+}
 
 /// This structure is responsible for holding each different kind of client
 pub struct ClientManager {

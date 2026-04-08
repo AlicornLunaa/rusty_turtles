@@ -1,17 +1,36 @@
-use std::{collections::HashMap, env};
-use simple_websockets::{Event, EventHub, Message, Responder};
+use std::{env, rc::Rc};
+use shared::op_codes::TurtleOpCode;
+use simple_websockets::{Event, EventHub, Message};
 use serde_json::Value;
 
-use crate::agent::{AgentType, PositionUpdate, RotationUpdate, TurtleMessage, TurtleOpCode};
-use crate::client_manager::ClientManager;
+use crate::managers::block_manager::BlockManager;
+use crate::managers::client_manager::{AgentType, ClientManager};
+use crate::object_relations::ORM;
+use crate::behaviors::{PositionUpdate, RotationUpdate, TurtleMessage};
 
-mod blocks;
+mod managers;
 mod object_relations;
-mod client_manager;
 mod turtle;
-mod agent;
+mod behaviors;
 
 const DEFAULT_PORT: u16 = 8080;
+
+pub struct AppState {
+    pub client_manager: ClientManager,
+    pub block_manager: BlockManager,
+    pub database: Rc<ORM>,
+}
+impl AppState {
+    pub fn new(database: ORM) -> Self {
+        let database = Rc::new(database);
+
+        AppState {
+            client_manager: ClientManager::new(),
+            block_manager: BlockManager::new(database.clone()),
+            database: database,
+        }
+    }
+}
 
 fn create_database() -> object_relations::ORM {
     // Read the database path from the environment variable, or use in memory if not set
@@ -43,15 +62,6 @@ fn create_socket_server() -> EventHub {
     simple_websockets::launch(port).expect(&format!("Failed to launch on port {}", port))
 }
 
-fn broadcast_message(sender: u64, message: &Message, clients: &HashMap<u64, Responder>) {
-    // Iterate through all connected clients and send the message to each one except the sender
-    for (client_id, responder) in clients.iter() {
-        if *client_id != sender {
-            responder.send(message.clone());
-        }
-    }
-}
-
 fn handle_payload(text: &str) -> Box<dyn TurtleMessage> {
     let msg: Vec<Value> = serde_json::from_str(text).unwrap();
 
@@ -74,32 +84,37 @@ fn handle_payload(text: &str) -> Box<dyn TurtleMessage> {
             let rotation = msg.get(1).and_then(Value::as_i64).unwrap() as i8;
             println!("rotate: {}", rotation);
             Box::new(RotationUpdate { rotation })
-        }
+        },
+        TurtleOpCode::BlockUpdate => {
+            let block_type = msg.get(1).and_then(Value::as_str).unwrap();
+            let x = msg.get(2).and_then(Value::as_i64).unwrap();
+            let y = msg.get(3).and_then(Value::as_i64).unwrap();
+            let z = msg.get(4).and_then(Value::as_i64).unwrap();
+            println!("block update: {}, {}, {} -> {}", x, y, z, block_type);
+            Box::new(behaviors::BlockUpdate { x, y, z, block_type: block_type.to_string() })
+        },
     }
 }
 
 fn main() {
     // Initialize the database and the WebSocket server
-    let database = create_database();
+    let mut app_state = AppState::new(create_database());
     let event_hub = create_socket_server();
-
-    // Create a client manager to keep track of connected clients and their agent types
-    let mut client_manager = ClientManager::new();
 
     // Enter the main event loop to handle incoming WebSocket events
     loop {
         match event_hub.poll_event() {
             Event::Connect(client_id, responder) => {
                 println!("A client connected with id #{}, determining agent type...", client_id);
-                client_manager.add_to_waiting_room(client_id, responder);
+                app_state.client_manager.add_to_waiting_room(client_id, responder);
             },
             Event::Disconnect(client_id) => {
                 println!("Client #{} disconnected.", client_id);
-                client_manager.remove_client(client_id);
+                app_state.client_manager.remove_client(client_id);
             },
             Event::Message(client_id, message) => {
                 // Check if the client is still in the waiting room (i.e., we haven't determined their agent type yet)
-                if client_manager.is_waiting(client_id) {
+                if app_state.client_manager.is_waiting(client_id) {
                     println!("Received a message from client #{} in waiting room: {:?}", client_id, message);
 
                     let agent_type_string = match message {
@@ -113,21 +128,21 @@ fn main() {
                     match agent_type_string.as_str() {
                         "turtle" => {
                             println!("Client #{} identified as a turtle agent.", client_id);
-                            client_manager.qualify_agent(client_id, AgentType::Turtle).unwrap();
+                            app_state.client_manager.qualify_agent(client_id, AgentType::Turtle).unwrap();
                         },
                         "client" => {
                             println!("Client #{} identified as a client agent.", client_id);
-                            client_manager.qualify_agent(client_id, AgentType::Client).unwrap();
+                            app_state.client_manager.qualify_agent(client_id, AgentType::Client).unwrap();
                         },
                         _ => {
                             println!("Unknown agent type '{}' from client #{}. Disconnecting.", agent_type_string, client_id);
-                            client_manager.send(client_id, Message::Text("unknown_agent_type".into())).unwrap();
-                            client_manager.remove_client(client_id);
+                            app_state.client_manager.send(client_id, Message::Text("unknown_agent_type".into())).unwrap();
+                            app_state.client_manager.remove_client(client_id);
                         }
                     }
                 } else {
                     println!("Received a message from client #{}: {:?}", client_id, message);
-                    let agent_type = client_manager.get_agent_type(client_id);
+                    let agent_type = app_state.client_manager.get_agent_type(client_id);
 
                     // Handle the message based on the agent type and broadcast it to other clients
                     match agent_type {
@@ -140,7 +155,7 @@ fn main() {
                                 }
                             };
                             let turtle_message = handle_payload(raw_data.trim());
-                            let res = turtle_message.handle_message(client_id, &mut client_manager, &database);
+                            let res = turtle_message.handle_message(client_id, &mut app_state);
 
                             if let Err(err) = res {
                                 println!("Error handling message from client #{}: {}", client_id, err);
@@ -150,7 +165,7 @@ fn main() {
                         Some(AgentType::Client) => {
                             // For client agents, we can implement different message handling logic if needed
                             println!("Received a message from a client agent #{}: {:?}", client_id, message);
-                            client_manager.send(client_id, message).unwrap();
+                            app_state.client_manager.send(client_id, message).unwrap();
                         }
                         None => {
                             println!("Received a message from an unidentified client #{}. Ignoring.", client_id);
@@ -158,6 +173,16 @@ fn main() {
                     }
                 }
             },
+        }
+
+        // Notify all clients of the current state of the world (e.g., block updates, turtle positions, etc.)
+        while app_state.block_manager.is_notification_pending() {
+            let update = app_state.block_manager.pop_notification();
+            let message = serde_json::to_string(&update).unwrap();
+
+            app_state.client_manager.get_visualizer_clients().iter().for_each(|(_, responder)| {
+                responder.send(Message::Text(message.clone()));
+            });
         }
     }
 }

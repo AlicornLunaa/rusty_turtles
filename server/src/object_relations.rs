@@ -1,7 +1,6 @@
 /// This file contains the ORM for the server, it sits as an abstraction layer between SQLite and custom data types
 use rusqlite::{Connection, Result, params};
-use super::blocks::{Block, Chest};
-use super::turtle::Turtle;
+use shared::blocks::{Block, Chest};
 
 pub struct ORM {
     conn: Connection,
@@ -53,7 +52,7 @@ impl ORM {
         Ok(())
     }
 
-    pub fn remove_block(&self, x: i32, y: i32, z: i32) -> Result<()> {
+    pub fn remove_block(&self, x: i64, y: i64, z: i64) -> Result<()> {
         self.conn.execute(
             "DELETE FROM blocks WHERE x = ?1 AND y = ?2 AND z = ?3",
             params![x, y, z],
@@ -61,7 +60,7 @@ impl ORM {
         Ok(())
     }
 
-    pub fn get_block(&self, x: i32, y: i32, z: i32) -> Option<Block> {
+    pub fn get_block(&self, x: i64, y: i64, z: i64) -> Option<Block> {
         let data = self.conn.query_row(
             "SELECT block_type FROM blocks WHERE x = ?1 AND y = ?2 AND z = ?3",
             params![x, y, z],
@@ -103,7 +102,7 @@ impl ORM {
         Ok(())
     }
 
-    pub fn remove_chest(&self, x: i32, y: i32, z: i32) -> Result<()> {
+    pub fn remove_chest(&self, x: i64, y: i64, z: i64) -> Result<()> {
         self.conn.execute(
             "DELETE FROM chests WHERE x = ?1 AND y = ?2 AND z = ?3",
             params![x, y, z],
@@ -111,7 +110,7 @@ impl ORM {
         Ok(())
     }
 
-    pub fn get_chest(&self, x: i32, y: i32, z: i32) -> Option<Chest> {
+    pub fn get_chest(&self, x: i64, y: i64, z: i64) -> Option<Chest> {
         let data = self.conn.query_row(
             "SELECT count, max_count, item_type FROM chests WHERE x = ?1 AND y = ?2 AND z = ?3",
             params![x, y, z],

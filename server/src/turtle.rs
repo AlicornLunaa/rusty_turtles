@@ -97,7 +97,10 @@ impl Turtle {
         let mut z = 0;
         let mut direction = Direction::NORTH;
 
-        ws_sender.send(Message::Text("turtle_init".into()));
+        if let Err(e) = ws_sender.send(Message::Text("turtle_init".into())).await {
+            eprintln!("Error with sending turtle init. {e}");
+            return Err(e.to_string());
+        }
 
         if let Some(response) = ws_receiver.next().await {
             match response {
@@ -135,15 +138,15 @@ impl Turtle {
                 match message {
                     TurtleMessage::SendRecv(message, sender) => {
                         // This WILL wait for a message
-                        ws_sender.send(message);
+                        ws_sender.send(message).await.expect("Something went wrong when sending");
 
                         if let Some(response) = ws_receiver.next().await {
-                            sender.send(response);
+                            sender.send(response).expect("Something went wrong when sending");
                         }
                     },
                     TurtleMessage::Send(message) => {
                         // Non-blocking for message, it wont wait for a response
-                        ws_sender.send(message);
+                        ws_sender.send(message).await.expect("Something went wrong when sending");
                     },
                 }
             }
@@ -179,7 +182,7 @@ impl VirtualTurtle for Turtle {
         // Create JSON table with action and args
         let (tx, rx) = oneshot::channel::<Result<Message, Error>>();
         let payload = serde_json::json!({ "action": "forward", "args": [] });
-        self.write_stream.send(TurtleMessage::SendRecv(Message::Text(payload.to_string().into()), tx));
+        self.write_stream.send(TurtleMessage::SendRecv(Message::Text(payload.to_string().into()), tx)).await.expect("Something went wrong when sending");
 
         match rx.await {
             Ok(result) => {

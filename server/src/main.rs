@@ -3,17 +3,15 @@ use std::{env, rc::Rc};
 use futures_util::StreamExt;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use tokio_tungstenite::tungstenite::Message;
 
 use crate::managers::block_manager::BlockManager;
 use crate::managers::turtle_manager::TurtleManager;
 use crate::object_relations::ORM;
-use crate::turtle::{Direction, Turtle};
+use crate::turtle::Turtle;
 
-mod managers;
 mod object_relations;
+mod managers;
 mod turtle;
-mod behaviors;
 
 const DEFAULT_PORT: u16 = 8080;
 

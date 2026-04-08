@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::{env, rc::Rc};
 use futures_util::StreamExt;
@@ -7,11 +8,12 @@ use tokio::sync::Mutex;
 use crate::managers::block_manager::BlockManager;
 use crate::managers::turtle_manager::TurtleManager;
 use crate::object_relations::ORM;
-use crate::turtle::Turtle;
+use crate::turtle::{Turtle, TurtleError, VirtualTurtle};
 
 mod object_relations;
 mod managers;
 mod turtle;
+mod client;
 
 const DEFAULT_PORT: u16 = 8080;
 
@@ -74,6 +76,34 @@ async fn main() {
     let turtle_manager = Arc::new(Mutex::new(TurtleManager::new()));
     let listener = create_socket_server().await;
 
+    // Testing loop
+    let manager = Arc::clone(&turtle_manager);
+    tokio::spawn(async move {
+        loop {
+            let mut turtles_to_remove: HashSet<u64> = HashSet::new();
+
+            for (id, turtle) in manager.lock().await.iter_turtles_mut() {
+                if !turtle.is_valid().await {
+                    println!("Turtle {id} is invalid.");
+                    turtles_to_remove.insert(*id);
+                    continue;
+                }
+
+                for i in 0..4 {
+                    turtle.forward().await.unwrap_or_else(|e| { if let TurtleError::SocketError(_) = e { turtles_to_remove.insert(*id); }});
+                    turtle.turn_left().await.unwrap_or_else(|e| { if let TurtleError::SocketError(_) = e { turtles_to_remove.insert(*id); }});
+                }
+            }
+
+            for i in turtles_to_remove {
+                println!("Removing turtle {i}");
+                manager.lock().await.remove_turtle(i);
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+        }
+    });
+
     // Main loop to accept incoming connections and spawn a new task for each one
     loop {
         let (stream, addr) = listener.accept().await.expect("Failed to accept connection");
@@ -90,7 +120,7 @@ async fn main() {
                 match response {
                     Ok(message) => {
                         // Simple text answer, either "turtle" or "client" for now.
-                        match message.to_text().unwrap() {
+                        match message.to_text().unwrap().trim().to_lowercase().as_str() {
                             "turtle" => {
                                 let turtle = Turtle::new(ws_stream).await.unwrap();
                                 turtle_manager.lock().await.add_turtle(turtle);

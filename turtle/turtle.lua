@@ -26,6 +26,34 @@ local action_table = {
         local success, err = turtle.turnRight()
         return textutils.serializeJSON({ success = success, error = err })
     end,
+
+    ["turtle_init"] = function(args)
+        local location_data
+
+        if fs.exists("location.json") then
+            local file = fs.open("location.json", "r")
+            local content = file.readAll()
+            file.close()
+            location_data = textutils.unserializeJSON(content)
+        else
+            write("X=")
+            local x = tonumber(read())
+            write("Y=")
+            local y = tonumber(read())
+            write("Z=")
+            local z = tonumber(read())
+            write("Direction=")
+            local direction = read()
+
+            location_data = { x = x, y = y, z = z, direction = direction }
+
+            local file = fs.open("location.json", "w")
+            file.write(textutils.serializeJSON(location_data))
+            file.close()
+        end
+
+        return textutils.serializeJSON(location_data)
+    end
 }
 
 function handle_command(socket, command)
@@ -80,6 +108,9 @@ function main()
             end
 
             print("Reconnected to server at " .. SERVER_URL)
+            ws.send("turtle")
         end
     end
 end
+
+main()

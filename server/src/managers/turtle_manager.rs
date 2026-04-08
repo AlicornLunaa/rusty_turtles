@@ -22,11 +22,23 @@ impl TurtleManager {
         id
     }
 
+    pub fn remove_turtle(&mut self, id: u64) -> bool {
+        self.turtles.remove(&id).is_some()
+    }
+
     pub fn get_turtle(&self, id: u64) -> Option<&Turtle> {
         self.turtles.get(&id)
     }
 
     pub fn get_turtle_mut(&mut self, id: u64) -> Option<&mut Turtle> {
         self.turtles.get_mut(&id)
+    }
+
+    pub fn iter_turtles(&self) -> impl Iterator<Item = (&u64, &Turtle)> {
+        self.turtles.iter()
+    }
+
+    pub fn iter_turtles_mut(&mut self) -> impl Iterator<Item = (&u64, &mut Turtle)> {
+        self.turtles.iter_mut()
     }
 }

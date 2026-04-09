@@ -4,7 +4,12 @@ use std::{fmt, sync::Arc};
 use serde_json::{Value, json};
 use tokio::{net::TcpStream, sync::{Mutex, mpsc, oneshot}, task::JoinHandle};
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt, stream::{SplitSink, SplitStream}};
+
+/// Typings
+type TurtleSink = SplitSink<WebSocketStream<TcpStream>, Message>;
+type TurtleSource = SplitStream<WebSocketStream<TcpStream>>;
+type TurtleSocket = WebSocketStream<TcpStream>;
 
 /// Enums representing various parameters for turtle operations.
 #[derive(Clone, Debug)]
@@ -155,9 +160,9 @@ pub struct Turtle {
 }
 
 impl Turtle {
-    pub async fn new(ws_stream: WebSocketStream<TcpStream>) -> Result<Self, String> {
-        // Obtain turtle information via questioning
-        let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+    // Constructors
+    async fn initial_handshake(ws_sender: &mut TurtleSink, ws_receiver: &mut TurtleSource) -> Result<(i64, i64, i64, Direction), String> {
+        // This function will do the initial questioning for position
         let x;
         let y;
         let z;
@@ -184,7 +189,7 @@ impl Turtle {
                         Some("west") => Direction::WEST,
                         Some(_) => return Err("Invalid direction supplied from turtle.".to_string()),
                         None => return Err("Invalid direction supplied from turtle.".to_string()),
-                    }
+                    };
                 },
                 Ok(Message::Close(_)) => {
                     return Err(format!("Connection closed prematurely."));
@@ -202,14 +207,12 @@ impl Turtle {
             return Err("No response from turtle.".to_string());
         }
 
-        // Keep track of the turtle's status across multiple threads
-        let valid_flag = Arc::new(Mutex::new(true));
-        
-        // Spawn generic controller for all messages
-        let (tx, mut rx) = mpsc::channel::<TurtleMessage>(32);
-        let background_valid_flag = Arc::clone(&valid_flag);
+        Ok((x, y, z, direction))
+    }
 
-        let handle = tokio::spawn(async move {
+    fn spawn_background_thread(mut rx: mpsc::Receiver<TurtleMessage>, mut ws_sender: TurtleSink, mut ws_receiver: TurtleSource, background_valid_flag: Arc<Mutex<bool>>) -> JoinHandle<()> {
+        // This function spawns a background thread and takes full ownership of the websocket stream
+        tokio::spawn(async move {
             // This background thread manages messages from tx by reading rx and sending it to the socket
             println!("Started consumer thread");
 
@@ -254,8 +257,18 @@ impl Turtle {
 
             *background_valid_flag.lock().await = false;
             println!("Consumer lost, closing thread");
-        });
+        })
+    }
 
+    pub async fn new(ws_stream: WebSocketStream<TcpStream>) -> Result<Self, String> {
+        // Obtain turtle information via questioning
+        let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+        let (tx, mut rx) = mpsc::channel::<TurtleMessage>(32);
+        let valid_flag = Arc::new(Mutex::new(true));
+
+        let (x, y, z, direction) = Self::initial_handshake(&mut ws_sender, &mut ws_receiver).await?;
+        let handle = Self::spawn_background_thread(rx, ws_sender, ws_receiver, Arc::clone(&valid_flag));
+        
         // Return the turtle object which has the sender object too
         Ok(Self {
             write_stream: tx,
@@ -266,6 +279,11 @@ impl Turtle {
         })
     }
 
+    // Turtle getters
+    pub async fn is_valid(&self) -> bool {
+        *self.valid.lock().await
+    }
+
     pub fn get_position(&self) -> (i64, i64, i64) {
         (self.x, self.y, self.z)
     }
@@ -274,10 +292,7 @@ impl Turtle {
         self.direction.clone()
     }
 
-    pub async fn is_valid(&self) -> bool {
-        *self.valid.lock().await
-    }
-
+    // Private helpers for communication with the actual turtle
     async fn remote_procedure_call(&self, payload: Value) -> Result<Value, TurtleError> {
         // Create JSON table with action and args
         let (tx, rx) = oneshot::channel::<Result<Message, TurtleError>>();
@@ -299,6 +314,42 @@ impl Turtle {
             },
         }
     }
+
+    async fn rpc_success_error(&self, payload: Value) -> Result<Value, TurtleError> {
+        let result = self.remote_procedure_call(payload).await?;
+        let success = result["success"].as_bool().unwrap_or(false);
+        let reason = result["error"].as_str();
+
+        if success {
+            Ok(result)
+        } else {
+            Err(TurtleError::VirtualError(reason.unwrap_or("Unspecified error").to_string()))
+        }
+    }
+
+    async fn move_relative(&mut self, dx: i64, dy: i64, dz: i64) -> Result<(), TurtleError> {
+        // Update by deltas
+        self.x += dx;
+        self.y += dy;
+        self.z += dz;
+
+        // Update turtle with another RPC
+        let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
+        let success = result["success"].as_bool().unwrap_or(false);
+        let reason = result["error"].as_str();
+
+        // Error handling
+        if success {
+            Ok(())
+        } else {
+            Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
+        }
+    }
+
+    async fn rotate_direction(&mut self, direction: Direction) -> Result<(), TurtleError> {
+        self.direction = direction;
+        self.move_relative(0, 0, 0).await
+    }
 }
 
 impl Drop for Turtle {
@@ -310,245 +361,97 @@ impl Drop for Turtle {
 /// Virtual turtle implementation for turtle
 impl VirtualTurtle for Turtle {
     async fn forward(&mut self) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "forward", "args": [] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
+        self.rpc_success_error(json!({ "action": "forward", "args": [] })).await?;
 
-        if success {
-            // Turtle moved forward, update position
-            match self.direction {
-                Direction::NORTH => self.z += 1,
-                Direction::EAST => self.x += 1,
-                Direction::SOUTH => self.z -= 1,
-                Direction::WEST => self.x -= 1,
-            }
+        match self.direction {
+            Direction::NORTH => self.move_relative(0, 0, -1).await?,
+            Direction::EAST => self.move_relative(1, 0, 0).await?,
+            Direction::SOUTH => self.move_relative(0, 0, 1).await?,
+            Direction::WEST => self.move_relative(-1, 0, 0).await?,
+        };
 
-            // Update turtle with another RPC
-            let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
-            let success = result["success"].as_bool().unwrap_or(false);
-            let reason = result["error"].as_str();
-
-            // Error handling
-            if success {
-                Ok(())
-            } else {
-                Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
-            }
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        Ok(())
     }
 
     async fn back(&mut self) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "back", "args": [] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
+        self.rpc_success_error(json!({ "action": "back", "args": [] })).await?;
 
-        if success {
-            // Turtle moved backward, update position
-            match self.direction {
-                Direction::NORTH => self.z -= 1,
-                Direction::EAST => self.x -= 1,
-                Direction::SOUTH => self.z += 1,
-                Direction::WEST => self.x += 1,
-            }
-
-            // Update turtle with another RPC
-            let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
-            let success = result["success"].as_bool().unwrap_or(false);
-            let reason = result["error"].as_str();
-
-            // Error handling
-            if success {
-                Ok(())
-            } else {
-                Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
-            }
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        match self.direction {
+            Direction::NORTH => self.move_relative(0, 0, 1).await?,
+            Direction::EAST => self.move_relative(-1, 0, 0).await?,
+            Direction::SOUTH => self.move_relative(0, 0, -1).await?,
+            Direction::WEST => self.move_relative(1, 0, 0).await?,
+        };
+        
+        Ok(())
     }
 
     async fn up(&mut self) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "up", "args": [] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            // Turtle moved up, update position
-            self.z += 1;
-
-            // Update turtle with another RPC
-            let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
-            let success = result["success"].as_bool().unwrap_or(false);
-            let reason = result["error"].as_str();
-
-            // Error handling
-            if success {
-                Ok(())
-            } else {
-                Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
-            }
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "up", "args": [] })).await?;
+        self.move_relative(0, 1, 0).await?;
+        Ok(())
     }
 
     async fn down(&mut self) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "down", "args": [] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            // Turtle moved down, update position
-            self.z -= 1;
-
-            // Update turtle with another RPC
-            let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
-            let success = result["success"].as_bool().unwrap_or(false);
-            let reason = result["error"].as_str();
-
-            // Error handling
-            if success {
-                Ok(())
-            } else {
-                Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
-            }
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "down", "args": [] })).await?;
+        self.move_relative(0, -1, 0).await?;
+        Ok(())
     }
 
     async fn turn_left(&mut self) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "turnLeft", "args": [] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
+        self.rpc_success_error(json!({ "action": "turnLeft", "args": [] })).await?;
 
-        if success {
-            // Turtle rotated, update direction
-            match self.direction {
-                Direction::NORTH => self.direction = Direction::WEST,
-                Direction::EAST => self.direction = Direction::NORTH,
-                Direction::SOUTH => self.direction = Direction::EAST,
-                Direction::WEST => self.direction = Direction::SOUTH,
-            }
-
-            // Update turtle with another RPC
-            let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
-            let success = result["success"].as_bool().unwrap_or(false);
-            let reason = result["error"].as_str();
-
-            // Error handling
-            if success {
-                Ok(())
-            } else {
-                Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
-            }
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
+        match self.direction {
+            Direction::NORTH => self.rotate_direction(Direction::WEST).await?,
+            Direction::EAST => self.rotate_direction(Direction::NORTH).await?,
+            Direction::SOUTH => self.rotate_direction(Direction::EAST).await?,
+            Direction::WEST => self.rotate_direction(Direction::SOUTH).await?,
         }
+        
+        Ok(())
     }
 
     async fn turn_right(&mut self) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "turnRight", "args": [] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
+        self.rpc_success_error(json!({ "action": "turnRight", "args": [] })).await?;
 
-        if success {
-            // Turtle rotated, update direction
-            match self.direction {
-                Direction::NORTH => self.direction = Direction::EAST,
-                Direction::EAST => self.direction = Direction::SOUTH,
-                Direction::SOUTH => self.direction = Direction::WEST,
-                Direction::WEST => self.direction = Direction::NORTH,
-            }
+        match self.direction {
+            Direction::NORTH => self.rotate_direction(Direction::EAST).await?,
+            Direction::EAST => self.rotate_direction(Direction::SOUTH).await?,
+            Direction::SOUTH => self.rotate_direction(Direction::WEST).await?,
+            Direction::WEST => self.rotate_direction(Direction::NORTH).await?,
+        };
 
-            // Update turtle with another RPC
-            let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
-            let success = result["success"].as_bool().unwrap_or(false);
-            let reason = result["error"].as_str();
-
-            // Error handling
-            if success {
-                Ok(())
-            } else {
-                Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
-            }
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        Ok(())
     }
 
     async fn dig(&mut self, side: Option<Side>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "dig", "args": [side.map(|s| s.to_value().to_string())] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "dig", "args": [side.map(|s| s.to_value().to_string())] })).await?;
+        Ok(())
     }
 
     async fn dig_up(&mut self, side: Option<Side>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "digUp", "args": [side.map(|s| s.to_value().to_string())] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-        
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "digUp", "args": [side.map(|s| s.to_value().to_string())] })).await?;
+        Ok(())
     }
 
     async fn dig_down(&mut self, side: Option<Side>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "digDown", "args": [side.map(|s| s.to_value().to_string())] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "digDown", "args": [side.map(|s| s.to_value().to_string())] })).await?;
+        Ok(())
     }
 
     async fn place(&mut self, text: Option<String>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "place", "args": [text] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "place", "args": [text] })).await?;
+        Ok(())
     }
 
     async fn place_up(&mut self, text: Option<String>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "placeUp", "args": [text] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "placeUp", "args": [text] })).await?;
+        Ok(())
     }
 
     async fn place_down(&mut self, text: Option<String>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "placeDown", "args": [text] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "placeDown", "args": [text] })).await?;
+        Ok(())
     }
 
     async fn detect(&self) -> Result<bool, TurtleError> {
@@ -628,75 +531,33 @@ impl VirtualTurtle for Turtle {
     }
 
     async fn drop(&mut self, count: Option<u8>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "drop", "args": [count] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "drop", "args": [count] })).await?;
+        Ok(())
     }
 
     async fn drop_up(&mut self, count: Option<u8>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "dropUp", "args": [count] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "dropUp", "args": [count] })).await?;
+        Ok(())
     }
 
     async fn drop_down(&mut self, count: Option<u8>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "dropDown", "args": [count] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "dropDown", "args": [count] })).await?;
+        Ok(())
     }
 
     async fn suck(&mut self, count: Option<u8>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "suck", "args": [count] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "suck", "args": [count] })).await?;
+        Ok(())
     }
 
     async fn suck_up(&mut self, count: Option<u8>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "suckUp", "args": [count] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "suckUp", "args": [count] })).await?;
+        Ok(())
     }
 
     async fn suck_down(&mut self, count: Option<u8>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "suckDown", "args": [count] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "suckDown", "args": [count] })).await?;
+        Ok(())
     }
 
     async fn transfer_to(&mut self, slot: Slot, count: Option<u8>) -> Result<(), TurtleError> {
@@ -741,39 +602,18 @@ impl VirtualTurtle for Turtle {
     }
 
     async fn refuel(&mut self, count: Option<u8>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "refuel", "args": [count] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "refuel", "args": [count] })).await?;
+        Ok(())
     }
 
     async fn equip_left(&mut self) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "equipLeft", "args": [] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "equipLeft", "args": [] })).await?;
+        Ok(())
     }
 
     async fn equip_right(&mut self) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "equipRight", "args": [] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "equipRight", "args": [] })).await?;
+        Ok(())
     }
 
     async fn get_equipped_left(&self) -> Result<Option<serde_json::Value>, TurtleError> {
@@ -787,50 +627,22 @@ impl VirtualTurtle for Turtle {
     }
 
     async fn craft(&mut self, limit: Option<u8>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "craft", "args": [limit] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "craft", "args": [limit] })).await?;
+        Ok(())
     }
 
     async fn attack(&mut self, side: Option<Side>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "attack", "args": [side.map(|s| s.to_value().to_string())] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "attack", "args": [side.map(|s| s.to_value().to_string())] })).await?;
+        Ok(())
     }
 
     async fn attack_up(&mut self, side: Option<Side>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "attackUp", "args": [side.map(|s| s.to_value().to_string())] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "attackUp", "args": [side.map(|s| s.to_value().to_string())] })).await?;
+        Ok(())
     }
 
     async fn attack_down(&mut self, side: Option<Side>) -> Result<(), TurtleError> {
-        let result = self.remote_procedure_call(json!({ "action": "attackDown", "args": [side.map(|s| s.to_value().to_string())] })).await?;
-        let success = result["success"].as_bool().unwrap_or(false);
-        let reason = result["error"].as_str();
-
-        if success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(reason.unwrap().to_string()))
-        }
+        self.rpc_success_error(json!({ "action": "attackDown", "args": [side.map(|s| s.to_value().to_string())] })).await?;
+        Ok(())
     }
 }

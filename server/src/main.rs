@@ -97,8 +97,8 @@ async fn main() {
                     let mut turtle_lock = turtle.lock().await;
 
                     for _ in 0..4 {
-                        if let Err(_) = turtle_lock.forward().await { break; }
-                        if let Err(_) = turtle_lock.forward().await { break; }
+                        if let Err(e) = turtle_lock.forward().await { println!("{e}"); break; }
+                        if let Err(e) = turtle_lock.forward().await { println!("{e}"); break; }
                         
                         turtle_lock.select(Slot::SLOT16).await;
                         if let Err(_) = turtle_lock.equip_left().await { break; }
@@ -112,10 +112,10 @@ async fn main() {
                         if let Err(_) = turtle_lock.back().await { break; }
                         if let Err(_) = turtle_lock.back().await { break; }
                         if let Err(_) = turtle_lock.turn_left().await { break; }
-                    }
 
-                    for i in 1..=16 {
-                        turtle_lock.select(Slot::from_u8(i)).await;
+                        for i in 1..=16 {
+                            turtle_lock.select(Slot::from_u8(i)).await;
+                        }
                     }
 
                     if !turtle_lock.is_valid().await {

@@ -180,6 +180,41 @@ local action_table = {
     end,
 
     -- Custom directives
+    ["start_gps_host"] = function(args, socket, request_id)
+        -- This starts a blocking job to host GPS
+        local success = true
+
+        function host()
+            socket.send(encapsulate_data(request_id, { success = true }))
+            success = shell.execute("gps", "host", tostring(args[1]), tostring(args[2]), tostring(args[3]))
+        end
+
+        function wait_for_stop_command()
+            while true do
+                local message, is_binary = socket.receive()
+        
+                if message then
+                    local request_id, command = decapsulate_data(message)
+                    
+                    if command.action == "stop_gps_host" then
+                        print("Received stop command.")
+                        socket.send(encapsulate_data(request_id, { success = true }))
+                        return
+                    else
+                        print("Ignoring command, currently hosting GPS")
+                        socket.send(encapsulate_data(request_id, { success = false, error = "GPS is currently running, cannot do anything else." }))
+                    end
+                end
+            end
+        end
+
+        parallel.waitForAny(host, wait_for_stop_command)
+        print("GPS host successful: " .. tostring(success))
+        return nil
+    end,
+    ["stop_gps_host"] = function(args)
+        return { success = false, error = "No GPS running." }
+    end,
     ["update_location"] = function(args)
         local location_data = { x = args[1], y = args[2], z = args[3], direction = args[4] }
 
@@ -235,8 +270,13 @@ function handle_command(socket, request_id, command)
     local action = action_table[command.action]
 
     if action then
-        local result = action(command.args)
-        socket.send(encapsulate_data(request_id, result))
+        local result = action(command.args, socket, request_id)
+
+        if result then
+            -- This is here so a function can choose whether or not to automatically respond.
+            -- This allows complex directives (gps_host) to takeover all behaviors until its done
+            socket.send(encapsulate_data(request_id, result))
+        end
     else
         local err = { success = false, error = "Invalid action" }
         socket.send(encapsulate_data(request_id, err))

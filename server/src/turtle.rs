@@ -261,7 +261,6 @@ impl Turtle {
                                 request_id += 1;
                             },
                             _ => {
-                                // Message type not supported
                                 break;
                             }
                         }
@@ -398,6 +397,32 @@ impl Turtle {
 impl Drop for Turtle {
     fn drop(&mut self) {
         self.join_handle.abort();
+    }
+}
+
+/// Smart turtle implementation
+impl Turtle {
+    pub async fn start_gps_host(&self) -> Result<(), TurtleError> {
+        let result = self.remote_procedure_call(json!({ "action": "start_gps_host", "args": [self.x, self.y, self.z] })).await?;
+        let success = result["success"].as_bool().unwrap_or(false);
+
+        if success {
+            Ok(())
+        } else {
+            Err(TurtleError::VirtualError("Error hosting GPS".to_string()))
+        }
+    }
+
+    pub async fn stop_gps_host(&self) -> Result<(), TurtleError> {
+        let result = self.remote_procedure_call(json!({ "action": "stop_gps_host", "args": [] })).await?;
+        let success = result["success"].as_bool().unwrap_or(false);
+        let reason = result["error"].as_str();
+
+        if success {
+            Ok(())
+        } else {
+            Err(TurtleError::VirtualError(reason.unwrap_or("Unspecified error").to_string()))
+        }
     }
 }
 

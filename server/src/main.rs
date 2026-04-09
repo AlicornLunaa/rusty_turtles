@@ -17,11 +17,6 @@ mod client;
 
 const DEFAULT_PORT: u16 = 8080;
 
-pub enum AgentType {
-    Turtle,
-    Client,
-}
-
 pub struct AppState {
     pub block_manager: BlockManager,
     pub database: Rc<ORM>,
@@ -140,7 +135,7 @@ async fn main() {
 
             turtles_to_remove.clear();
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(10000)).await;
         }
     });
 

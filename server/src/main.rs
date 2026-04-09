@@ -98,6 +98,14 @@ async fn main() {
 
                     for _ in 0..4 {
                         if let Err(_) = turtle_lock.forward().await { break; }
+                        if let Err(_) = turtle_lock.forward().await { break; }
+
+                        if let Err(e) = turtle_lock.dig(None).await {
+                            println!("Error: {e}");
+                        }
+                        
+                        if let Err(_) = turtle_lock.back().await { break; }
+                        if let Err(_) = turtle_lock.back().await { break; }
                         if let Err(_) = turtle_lock.turn_left().await { break; }
                     }
 

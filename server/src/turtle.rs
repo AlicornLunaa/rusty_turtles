@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::{fmt, sync::Arc};
 
 use serde_json::{Value, json};

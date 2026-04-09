@@ -99,10 +99,15 @@ async fn main() {
                     for _ in 0..4 {
                         if let Err(_) = turtle_lock.forward().await { break; }
                         if let Err(_) = turtle_lock.forward().await { break; }
-
+                        
+                        turtle_lock.select(Slot::SLOT16).await;
+                        if let Err(_) = turtle_lock.equip_left().await { break; }
+                        turtle_lock.select(Slot::SLOT1).await;
                         if let Err(e) = turtle_lock.dig(None).await {
                             println!("{e}");
                         }
+                        turtle_lock.select(Slot::SLOT16).await;
+                        if let Err(_) = turtle_lock.equip_left().await { break; }
 
                         if let Err(_) = turtle_lock.back().await { break; }
                         if let Err(_) = turtle_lock.back().await { break; }

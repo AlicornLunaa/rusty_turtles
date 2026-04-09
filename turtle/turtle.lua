@@ -266,6 +266,11 @@ function main()
         end
     end )
 
+    -- Print out the error problem
+    if err then
+        print(err)
+    end
+
     -- Cleanup main
     if ws then
         ws.close()

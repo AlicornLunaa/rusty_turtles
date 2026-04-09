@@ -31,15 +31,6 @@ Each task is just what I call an ActionStack, or a list of actual actions to tak
     - Idle: does nothing
     - RC: Turtle is being remotely controlled
 
-## Turtle operations
-- 0x01 handshake (fuel level) -> ()
-- 0x02 telemetry update (x, y, z) -> ()
-- 0x03 block update (x, y, z, block) -> ()
-- 0x04 task consume () -> (task id)
-- 0x05 task complete (task id)
-- 0x06 job consume () -> (job id)
-- 0x07 abort () -> ()
-
 ### Tasks
 - MoveTo(x, y, z)
 - Dig(x, y, z)

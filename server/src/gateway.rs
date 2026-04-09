@@ -1,5 +1,9 @@
+use std::sync::Arc;
+
 use serde_json::{Value, json};
-use tokio::{sync::{mpsc, oneshot}, task::JoinHandle};
+use tokio::{sync::{Mutex, mpsc, oneshot}, task::JoinHandle};
+
+use crate::managers::{block_manager::BlockManager, turtle_manager::{self, TurtleManager}};
 
 /// This module contains the server controller for incoming requests
 pub enum ServerAction {
@@ -15,11 +19,18 @@ pub enum ServerMessage {
 
 pub struct Gateway {
     join_handle: JoinHandle<()>,
-    sender: mpsc::Sender<ServerMessage> // Used for cloning
+    sender: mpsc::Sender<ServerMessage>, // Used for cloning
+    turtle_manager: Arc<Mutex<TurtleManager>>,
+    block_manager: Arc<Mutex<BlockManager>>,
 }
 
 impl Gateway {
-    pub fn new() -> Self {
+    async fn start_gps_procedure(){
+        // This procedure finds 4 turtles which are not in use, tells them to move out into a constellation, then host GPS
+        // for another turtle to locate itself for bootstrapping
+    }
+
+    pub fn new(turtle_manager: Arc<Mutex<TurtleManager>>, block_manager: Arc<Mutex<BlockManager>>) -> Self {
         // Start a MPSC channel to handle incoming requests
         let (tx, mut rx) = mpsc::channel::<ServerMessage>(32);
 
@@ -58,7 +69,9 @@ impl Gateway {
 
         Gateway {
             join_handle,
-            sender: tx
+            sender: tx,
+            turtle_manager,
+            block_manager
         }
     }
 

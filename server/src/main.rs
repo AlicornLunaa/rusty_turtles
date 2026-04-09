@@ -56,7 +56,7 @@ async fn main() {
     let database = Arc::new(Mutex::new(create_database()));
     let block_manager = Arc::new(Mutex::new(BlockManager::new(Arc::clone(&database))));
     let turtle_manager = Arc::new(Mutex::new(TurtleManager::new()));
-    let gateway = Gateway::new();
+    let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone());
 
     let listener = create_socket_server().await;
 

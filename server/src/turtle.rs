@@ -419,6 +419,7 @@ impl Drop for Turtle {
 
 /// Smart turtle implementation
 impl Turtle {
+    // GPS functions
     pub async fn start_gps_host(&self) -> Result<(), TurtleError> {
         let result = self.remote_procedure_call(json!({ "action": "start_gps_host", "args": [self.x, self.y, self.z] })).await?;
         let success = result["success"].as_bool().unwrap_or(false);

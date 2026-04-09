@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 use crate::managers::block_manager::BlockManager;
 use crate::managers::turtle_manager::TurtleManager;
 use crate::object_relations::ORM;
-use crate::turtle::{Turtle, VirtualTurtle};
+use crate::turtle::{Slot, Turtle, VirtualTurtle};
 
 mod object_relations;
 mod managers;
@@ -101,12 +101,16 @@ async fn main() {
                         if let Err(_) = turtle_lock.forward().await { break; }
 
                         if let Err(e) = turtle_lock.dig(None).await {
-                            println!("Error: {e}");
+                            println!("{e}");
                         }
-                        
+
                         if let Err(_) = turtle_lock.back().await { break; }
                         if let Err(_) = turtle_lock.back().await { break; }
                         if let Err(_) = turtle_lock.turn_left().await { break; }
+                    }
+
+                    for i in 1..=16 {
+                        turtle_lock.select(Slot::from_u8(i)).await;
                     }
 
                     if !turtle_lock.is_valid().await {

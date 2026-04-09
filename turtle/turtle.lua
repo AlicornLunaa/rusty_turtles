@@ -267,7 +267,7 @@ function main()
     end )
 
     -- Cleanup main
-    if ws ~= nil then
+    if ws then
         ws.close()
     end
 end

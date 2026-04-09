@@ -8,6 +8,7 @@ use futures_util::{SinkExt, StreamExt};
 /// Enums representing various parameters for turtle operations.
 #[derive(Clone, Debug)]
 pub enum Direction { NORTH, EAST, SOUTH, WEST }
+
 #[derive(Clone, Copy, Debug)]
 pub enum Side { LEFT, RIGHT }
 impl Side {
@@ -18,6 +19,7 @@ impl Side {
         }
     }
 }
+
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot { SLOT1 = 1, SLOT2 = 2, SLOT3 = 3, SLOT4 = 4, SLOT5 = 5, SLOT6 = 6, SLOT7 = 7, SLOT8 = 8, SLOT9 = 9, SLOT10 = 10, SLOT11 = 11, SLOT12 = 12, SLOT13 = 13, SLOT14 = 14, SLOT15 = 15, SLOT16 = 16 }
@@ -25,7 +27,8 @@ impl Slot {
     fn to_value(&self) -> Value {
         json!(*self as u8)
     }
-    fn from_u8(n: u8) -> Self {
+
+    pub fn from_u8(n: u8) -> Self {
         match n {
             1 => Slot::SLOT1, 2 => Slot::SLOT2, 3 => Slot::SLOT3, 4 => Slot::SLOT4,
             5 => Slot::SLOT5, 6 => Slot::SLOT6, 7 => Slot::SLOT7, 8 => Slot::SLOT8,
@@ -35,10 +38,11 @@ impl Slot {
         }
     }
 }
+
 #[derive(Clone, Debug)]
 pub enum FuelLevel { Amount(u32), Unlimited }
 impl FuelLevel {
-    fn from_value(v: &Value) -> Self {
+    pub fn from_value(v: &Value) -> Self {
         if let Some(n) = v.as_u64() {
             FuelLevel::Amount(n as u32)
         } else if v.as_str() == Some("unlimited") {

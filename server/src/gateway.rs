@@ -1,8 +1,16 @@
-use tokio::{sync::mpsc, task::JoinHandle};
+use serde_json::{Value, json};
+use tokio::{sync::{mpsc, oneshot}, task::JoinHandle};
 
 /// This module contains the server controller for incoming requests
-pub enum ServerMessage {
+pub enum ServerAction {
     Ping,
+    SetupGPS,
+    StopGPS,
+}
+
+pub enum ServerMessage {
+    Procedure{ client_id: u64, action: ServerAction, tx: oneshot::Sender<Result<Value, String>>}, // The caller expects a response
+    Oneshot{ client_id: u64, action: ServerAction }, // An action fired off and forgot about
 }
 
 pub struct Gateway {
@@ -21,9 +29,27 @@ impl Gateway {
 
             while let Some(message) = rx.recv().await {
                 match message {
-                    ServerMessage::Ping => {
-                        println!("Ping received");
+                    ServerMessage::Oneshot { client_id, action } => {
+                        match action {
+                            ServerAction::Ping => {
+                                println!("Ping received");
+                            },
+                            _ => {
+                                println!("Unknown oneshot action received");
+                            }
+                        }
                     },
+                    ServerMessage::Procedure { client_id, action, tx } => {
+                        match action {
+                            ServerAction::Ping => {
+                                println!("Ping received");
+                                let _ = tx.send(Ok(json!({ "success": true })));
+                            },
+                            _ => {
+                                println!("Unknown procedure action received");
+                            }
+                        }
+                    }
                 }
             }
 

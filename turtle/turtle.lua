@@ -198,11 +198,22 @@ local action_table = {
                     
                     if command.action == "stop_gps_host" then
                         print("Received stop command.")
-                        socket.send(encapsulate_data(request_id, { success = true }))
+                        socket.send(encapsulate_data({
+                            type = "response",
+                            res_id = request_id,
+                            data = { success = true }
+                        }))
                         return
                     else
                         print("Ignoring command, currently hosting GPS")
-                        socket.send(encapsulate_data(request_id, { success = false, error = "GPS is currently running, cannot do anything else." }))
+                        socket.send(encapsulate_data({
+                            type = "response",
+                            res_id = request_id,
+                            data = {
+                                success = false,
+                                error = "GPS is currently running, cannot do anything else."
+                            }
+                        }))
                     end
                 end
             end
@@ -257,30 +268,42 @@ local action_table = {
     end
 }
 
-function encapsulate_data(request_id, data)
-    return textutils.serializeJSON({ request_id = request_id, message = textutils.serializeJSON(data) })
+function encapsulate_data(data)
+    return textutils.serializeJSON(data)
 end
 
 function decapsulate_data(data)
     local json = textutils.unserializeJSON(data)
-    return json["request_id"], textutils.unserializeJSON(json["message"])
+    return json
 end
 
-function handle_command(socket, request_id, command)
+function handle_command(socket, data)
     -- This will parse the command, execute it, and send back the result to the server
+    local request_id = data["req_id"]
+    local oneshot = data["oneshot"] 
+    local command = data["data"]
     local action = action_table[command.action]
 
     if action then
         local result = action(command.args, socket, request_id)
 
-        if result then
+        if result and not oneshot then
             -- This is here so a function can choose whether or not to automatically respond.
             -- This allows complex directives (gps_host) to takeover all behaviors until its done
-            socket.send(encapsulate_data(request_id, result))
+            socket.send(encapsulate_data({
+                type = "response",
+                res_id = request_id,
+                data = result
+            }))
         end
-    else
+    elseif not oneshot then
         local err = { success = false, error = "Invalid action" }
-        socket.send(encapsulate_data(request_id, err))
+        
+        socket.send(encapsulate_data({
+                type = "response",
+                res_id = request_id,
+                data = err
+        }))
     end
 end
 
@@ -309,9 +332,9 @@ function main()
             local message, is_binary = ws.receive()
     
             if message then
-                local request_id, command = decapsulate_data(message)
-                print("Received command: " .. message .. ", id: " .. request_id)
-                handle_command(ws, request_id, command)
+                local data = decapsulate_data(message)
+                print("Received command: " .. message)
+                handle_command(ws, data)
             else
                 print("Connection to server lost. Attempting to reconnect...")
                 ws.close()

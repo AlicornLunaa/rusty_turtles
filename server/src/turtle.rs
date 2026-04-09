@@ -6,7 +6,8 @@ use tokio::{net::TcpStream, sync::{Mutex, mpsc, oneshot}, task::JoinHandle};
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 use futures_util::{SinkExt, StreamExt, stream::{SplitSink, SplitStream}};
 
-use crate::gateway::{Gateway, ServerMessage};
+use crate::{gateway::{Gateway, ServerMessage}, payload::Payload};
+use crate::gateway::ServerAction;
 
 /// Typings
 type TurtleSink = SplitSink<WebSocketStream<TcpStream>, Message>;
@@ -146,12 +147,13 @@ pub trait VirtualTurtle {
 }
 
 pub enum TurtleMessage {
-    SendRecv(Message, oneshot::Sender<Result<Message, TurtleError>>),
-    Send(Message),
+    SendRecv(Value, oneshot::Sender<Result<Value, TurtleError>>),
+    Send(Value),
 }
 
 /// A struct representing a turtle, which implements the VirtualTurtle trait.
 pub struct Turtle {
+    id: u64,
     turtle_write_stream: mpsc::Sender<TurtleMessage>,
     join_handle: JoinHandle<()>,
     x: i64,
@@ -162,58 +164,45 @@ pub struct Turtle {
 }
 
 impl Turtle {
-    // Encapsulation helpers
-    fn encapsulate_payload(request_id: u64, message: Value) -> Message {
-        let message_text = message.to_string();
-        Message::Text(json!({ "request_id": request_id, "message": message_text }).to_string().into())
-    }
-
-    fn decapsulate_payload(text: &str) -> (u64, Value) {
-        let message: Value = serde_json::from_str(&text).unwrap();
-        let request_id = message["request_id"].as_u64().unwrap();
-        let message = message["message"].as_str().unwrap();
-        (request_id, serde_json::from_str(message).unwrap())
-    }
-
     // Constructors
-    fn decode_server_request(request_id: u64, payload: Value) -> Result<ServerMessage, String> {
-        let action = payload["action"].as_str().unwrap_or("");
-        
-        match action {
-            "ping" => Ok(ServerMessage::Ping),
-            _ => Err("No server payload".to_string())
-        }
-    }
-
     async fn initial_handshake(ws_sender: &mut TurtleSink, ws_receiver: &mut TurtleSource) -> Result<(i64, i64, i64, Direction), String> {
-        // This function will do the initial questioning for position
-        let x;
-        let y;
-        let z;
-        let direction: Direction;
-        
-        if let Err(e) = ws_sender.send(Turtle::encapsulate_payload(0, json!({ "action": "turtle_init", "args": [] }))).await {
+        // Send request to the turtle
+        let payload = Payload::Request { id: 0, oneshot: false, data: json!({ "action": "turtle_init", "args": [] }) };
+
+        if let Err(e) = ws_sender.send(Message::Text(payload.encode().into())).await {
             return Err(format!("Error with sending turtle init. {e}"));
         }
 
         // Wait for the turtle's response
-        if let Some(response) = ws_receiver.next().await {
+        while let Some(response) = ws_receiver.next().await {
             match response {
                 Ok(Message::Text(text)) => {
-                    // Deserialize the returned JSON
-                    let (_, data) = Turtle::decapsulate_payload(&text);
-                    x = data["x"].as_i64().unwrap();
-                    y = data["y"].as_i64().unwrap();
-                    z = data["z"].as_i64().unwrap();
-                    
-                    direction = match data["direction"].as_str() {
-                        Some("north") => Direction::NORTH,
-                        Some("east") => Direction::EAST,
-                        Some("south") => Direction::SOUTH,
-                        Some("west") => Direction::WEST,
-                        Some(_) => return Err("Invalid direction supplied from turtle.".to_string()),
-                        None => return Err("Invalid direction supplied from turtle.".to_string()),
-                    };
+                    // Decode the payload and wait for a response
+                    let payload = Payload::decode(&text).unwrap();
+
+                    match payload {
+                        Payload::Request { id, oneshot, data } => {
+                            // This is not a response, forward it to the server
+                            todo!()
+                        },
+                        Payload::Response { id, data } => {
+                            // This IS a response, it must be ours
+                            let x = data["x"].as_i64().unwrap();
+                            let y = data["y"].as_i64().unwrap();
+                            let z = data["z"].as_i64().unwrap();
+                            
+                            let direction = match data["direction"].as_str() {
+                                Some("north") => Direction::NORTH,
+                                Some("east") => Direction::EAST,
+                                Some("south") => Direction::SOUTH,
+                                Some("west") => Direction::WEST,
+                                Some(_) => return Err("Invalid direction supplied from turtle.".to_string()),
+                                None => return Err("Invalid direction supplied from turtle.".to_string()),
+                            };
+
+                            return Ok((x, y, z, direction));
+                        },
+                    }
                 },
                 Ok(Message::Close(_)) => {
                     return Err(format!("Connection closed prematurely."));
@@ -226,15 +215,13 @@ impl Turtle {
                     return Err(format!("Issue with message."));
                 },
             }
-        } else {
-            // No response, likely dropped turtle
-            return Err("No response from turtle.".to_string());
         }
 
-        Ok((x, y, z, direction))
+        // No response, likely dropped turtle
+        Err("No response from turtle.".to_string())
     }
 
-    fn spawn_background_thread(mut rx: mpsc::Receiver<TurtleMessage>, mut ws_sender: TurtleSink, mut ws_receiver: TurtleSource, mut server_sender: mpsc::Sender<ServerMessage>, background_valid_flag: Arc<Mutex<bool>>) -> JoinHandle<()> {
+    fn spawn_worker_thread(client_id: u64, mut turtle_rx: mpsc::Receiver<TurtleMessage>, mut server_tx: mpsc::Sender<ServerMessage>, mut ws_sender: TurtleSink, mut ws_receiver: TurtleSource, background_valid_flag: Arc<Mutex<bool>>) -> JoinHandle<()> {
         // This function spawns a background thread and takes full ownership of the websocket stream
         tokio::spawn(async move {
             // This background thread manages messages from tx by reading rx and sending it to the socket
@@ -245,14 +232,14 @@ impl Turtle {
 
             loop {
                 tokio::select! {
-                    Some(message) = rx.recv() => {
-                        // This means the turtle object has sent a message to this, which should be relayed to the websocket
+                    Some(message) = turtle_rx.recv() => {
+                        // This means the server has sent a message to this turtle, which should be relayed to the websocket
                         match message {
-                            TurtleMessage::SendRecv(Message::Text(message), sender) => {
-                                // This WILL wait for a message, but first send it to the client
-                                let encapsulated = json!({ "request_id": request_id, "message": message.to_string() });
+                            TurtleMessage::SendRecv(data, sender) => {
+                                // This tells the server to expect a response after it sends, like a procedure call
+                                let payload = Payload::Request { id: request_id, oneshot: false, data };
 
-                                if let Err(e) = ws_sender.send(Message::Text(encapsulated.to_string().into())).await {
+                                if let Err(e) = ws_sender.send(Message::Text(payload.encode().into())).await {
                                     let _ = sender.send(Err(TurtleError::SocketError(e.to_string())));
                                     break;
                                 }
@@ -261,11 +248,11 @@ impl Turtle {
                                 pending_responses.insert(request_id, sender);
                                 request_id += 1;
                             },
-                            TurtleMessage::Send(message) => {
+                            TurtleMessage::Send(data) => {
                                 // Non-blocking for message, it wont wait for a response
-                                let encapsulated = json!({ "request_id": request_id, "message": message.to_string() });
+                                let payload = Payload::Request { id: request_id, oneshot: true, data };
 
-                                if ws_sender.send(Message::Text(encapsulated.to_string().into())).await.is_err() {
+                                if ws_sender.send(Message::Text(payload.encode().into())).await.is_err() {
                                     break;
                                 }
 
@@ -277,31 +264,61 @@ impl Turtle {
                         }
                     },
                     Some(message) = ws_receiver.next() => {
-                        // This means the websocket has received a message, which should be relayed to the server
+                        // This means the turtle has sent a message to the server/websocket, which should be relayed to the gateway or used as a response
                         match message {
                             Ok(Message::Text(message)) => {
                                 // First decapsulate the data
-                                let message: Value = serde_json::from_str(&message).unwrap();
-                                let request_id = message["request_id"].as_u64().unwrap();
-                                let message = message["message"].as_str().unwrap();
-                                let sender = pending_responses.remove(&request_id);
+                                let payload = Payload::decode(&message).unwrap();
 
-                                match sender {
-                                    Some(sender) => {
-                                        // Sender found, its a response to a previous message
-                                        if sender.send(Ok(Message::Text(message.to_string().into()))).is_err() {
-                                            break;
+                                match payload {
+                                    Payload::Request { id, oneshot, data } => {
+                                        // This is a new request for the server from the turtle. This one is blocking for the turtle worker thread
+                                        let action = match data["action"].as_str() {
+                                            Some("ping") => ServerAction::Ping,
+                                            _ => continue,
+                                        };
+                                        
+                                        // Execute oneshot waiting
+                                        if !oneshot {
+                                            // This isn't a one shot request, it needs a return channel to wait for
+                                            let (tx, rx) = oneshot::channel::<Result<Value, String>>();
+                                            let server_message = ServerMessage::Procedure { client_id: client_id, action, tx };
+                                            
+                                            if let Err(e) = server_tx.send(server_message).await {
+                                                // Something went wrong with the write stream
+                                                let payload = Payload::Response { id, data: json!({ "success": false, "error": e.to_string() }) };
+
+                                                if ws_sender.send(Message::Text(payload.encode().into())).await.is_err() {
+                                                    break;
+                                                }
+                                            }
+
+                                            // Wait for immediate response
+                                            let payload = match rx.await {
+                                                Ok(Ok(data)) => Payload::Response { id, data },
+                                                Ok(Err(e)) => Payload::Response { id, data: json!({ "success": false, "error": e }) },
+                                                Err(e) => Payload::Response { id, data: json!({ "success": false, "error": e.to_string() }) },
+                                            };
+
+                                            if ws_sender.send(Message::Text(payload.encode().into())).await.is_err() {
+                                                break;
+                                            }
+                                        } else {
+                                            // This is a one shot, so just send it off and forget
+                                            let server_message = ServerMessage::Oneshot { client_id: client_id, action };
+                                            server_tx.send(server_message).await;
                                         }
                                     },
-                                    None => {
-                                        // No sender found, this is an unsolicited message
-                                        match Turtle::decode_server_request(request_id, serde_json::from_str(message).unwrap()) {
-                                            Ok(server_message) => {
-                                                server_sender.send(server_message).await.unwrap();
-                                            },
-                                            Err(_) => {
-                                                println!("Ignoring message with no correct payload.");
-                                            },
+                                    Payload::Response { id, data } => {
+                                        // This is a response from the turtle to the server
+                                        let sender = pending_responses.remove(&id);
+
+                                        if let Some(sender) = sender {
+                                            // Send the response to the sender if the channel still exists
+                                            if sender.send(Ok(data)).is_err() {
+                                                // If the response channel doesn't work, we've probably dropped the turtle.
+                                                break;
+                                            }
                                         }
                                     },
                                 }
@@ -319,17 +336,18 @@ impl Turtle {
         })
     }
 
-    pub async fn new(ws_stream: WebSocketStream<TcpStream>, server_stream: mpsc::Sender<ServerMessage>) -> Result<Self, String> {
+    pub async fn new(id: u64, ws_stream: WebSocketStream<TcpStream>, server_tx: mpsc::Sender<ServerMessage>) -> Result<Self, String> {
         // Obtain turtle information via questioning
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
         let (tx, mut rx) = mpsc::channel::<TurtleMessage>(32);
         let valid_flag = Arc::new(Mutex::new(true));
 
         let (x, y, z, direction) = Self::initial_handshake(&mut ws_sender, &mut ws_receiver).await?;
-        let handle = Self::spawn_background_thread(rx, ws_sender, ws_receiver, server_stream, Arc::clone(&valid_flag));
+        let handle = Self::spawn_worker_thread(id, rx, server_tx, ws_sender, ws_receiver, Arc::clone(&valid_flag));
         
         // Return the turtle object which has the sender object too
         Ok(Self {
+            id,
             turtle_write_stream: tx,
             join_handle: handle,
             x, y, z,
@@ -354,9 +372,9 @@ impl Turtle {
     // Private helpers for communication with the actual turtle
     async fn remote_procedure_call(&self, payload: Value) -> Result<Value, TurtleError> {
         // Create JSON table with action and args
-        let (tx, rx) = oneshot::channel::<Result<Message, TurtleError>>();
+        let (tx, rx) = oneshot::channel::<Result<Value, TurtleError>>();
 
-        if let Err(e) = self.turtle_write_stream.send(TurtleMessage::SendRecv(Message::Text(payload.to_string().into()), tx)).await {
+        if let Err(e) = self.turtle_write_stream.send(TurtleMessage::SendRecv(payload, tx)).await {
             // Something went wrong with the write stream
             return Err(TurtleError::SocketError(e.to_string()));
         }

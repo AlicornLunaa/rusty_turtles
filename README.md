@@ -37,7 +37,7 @@ Each task is just what I call an ActionStack, or a list of actual actions to tak
     "type": "request",
     "req_id": 0,
     "oneshot": false,
-    "payload": {
+    "data": {
         "action": "forward",
         "args": []
     }
@@ -45,8 +45,8 @@ Each task is just what I call an ActionStack, or a list of actual actions to tak
 
 {
     "type": "response",
-    "req_id": 0,
-    "payload": {
+    "res_id": 0,
+    "data": {
         "success": true,
         "error": null
     }

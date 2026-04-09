@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::{env, rc::Rc};
+use std::env;
 use futures_util::StreamExt;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -8,11 +8,11 @@ use tokio::sync::Mutex;
 use crate::gateway::Gateway;
 use crate::managers::block_manager::BlockManager;
 use crate::managers::turtle_manager::TurtleManager;
-use crate::object_relations::ORM;
 use crate::turtle::{Slot, Turtle, VirtualTurtle};
 
 mod object_relations;
 mod managers;
+mod payload;
 mod gateway;
 mod turtle;
 mod client;
@@ -114,18 +114,20 @@ async fn main() {
             // Run all turtle actions concurrently
             futures_util::future::join_all(handles).await;
 
-            // Remove turtles marked as invalid
-            let mut manager = manager.lock().await;
-            let mut turtles_to_remove = turtles_to_remove.lock().await;
-
-            for i in turtles_to_remove.iter() {
-                println!("Removing turtle {i}");
-                manager.remove_turtle(*i);
+            {
+                // Remove turtles marked as invalid
+                let mut manager = manager.lock().await;
+                let mut turtles_to_remove = turtles_to_remove.lock().await;
+    
+                for i in turtles_to_remove.iter() {
+                    println!("Removing turtle {i}");
+                    manager.remove_turtle(*i);
+                }
+    
+                turtles_to_remove.clear();
             }
 
-            turtles_to_remove.clear();
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(10000)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
         }
     });
 
@@ -148,7 +150,8 @@ async fn main() {
                         // Simple text answer, either "turtle" or "client" for now.
                         match message.to_text().unwrap().trim().to_lowercase().as_str() {
                             "turtle" => {
-                                let turtle = Turtle::new(ws_stream, server_write_stream).await.unwrap();
+                                let new_turtle_id = turtle_manager.lock().await.get_next_id();
+                                let turtle = Turtle::new(new_turtle_id, ws_stream, server_write_stream).await.unwrap();
                                 let turtle = Arc::new(Mutex::new(turtle));
                                 turtle_manager.lock().await.add_turtle(turtle);
                             },

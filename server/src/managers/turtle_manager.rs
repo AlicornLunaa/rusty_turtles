@@ -43,4 +43,8 @@ impl TurtleManager {
     pub fn iter_turtles_mut(&mut self) -> impl Iterator<Item = (&u64, &mut Arc<Mutex<Turtle>>)> {
         self.turtles.iter_mut()
     }
+
+    pub fn get_next_id(&self) -> u64 {
+        self.next_id
+    }
 }

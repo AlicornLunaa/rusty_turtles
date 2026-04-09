@@ -15,19 +15,11 @@ There will be a job queue and a task pool. A turtle at IDLE will consume a job, 
 The turtle marks each task as complete and the server will mark each job as complete if every task is finished.
 Each task is just what I call an ActionStack, or a list of actual actions to take with the turtle.
 
-## Atomic movement tracking:
-1. Create intent file
-2. Move
-3. If successful or unsuccessful, remove intent file and handle position accordingly
-4. If intent file already exists, request help
-5. Server broadcasts task for hosting GPS
-6. Turtle obtains GPS from other known good turtles
-
 ## Goals:
 1. [x] Setup server communications, registering/dropping clients
 2. [ ] Setup database memory system
-3. [ ] Create virtual turtle initializer and destroyer
-4. [ ] Create dead-reckoning system for turtles
+3. [x] Create virtual turtle initializer and destroyer
+4. [x] Create dead-reckoning system for turtles
 5. [ ] Create virtual turtle remote control for testing
 6. [ ] Create pathfinding endpoint for clients to query
 7. [ ] Implement multi-turtle pathfinding at the same time

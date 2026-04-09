@@ -1,6 +1,6 @@
+/// This module is responsible for managing blocks in the world, including updating block states and notifying visualizers of changes.
 use std::rc::Rc;
 
-/// This module is responsible for managing blocks in the world, including updating block states and notifying visualizers of changes.
 use crate::object_relations::ORM;
 use shared::blocks::{Block, BlockNotification};
 

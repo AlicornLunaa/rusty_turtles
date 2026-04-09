@@ -5,6 +5,7 @@ use futures_util::StreamExt;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
+use crate::gateway::Gateway;
 use crate::managers::block_manager::BlockManager;
 use crate::managers::turtle_manager::TurtleManager;
 use crate::object_relations::ORM;
@@ -12,25 +13,11 @@ use crate::turtle::{Slot, Turtle, VirtualTurtle};
 
 mod object_relations;
 mod managers;
+mod gateway;
 mod turtle;
 mod client;
 
 const DEFAULT_PORT: u16 = 8080;
-
-pub struct AppState {
-    pub block_manager: BlockManager,
-    pub database: Rc<ORM>,
-}
-impl AppState {
-    pub fn new(database: ORM) -> Self {
-        let database = Rc::new(database);
-
-        AppState {
-            block_manager: BlockManager::new(database.clone()),
-            database: database,
-        }
-    }
-}
 
 fn create_database() -> object_relations::ORM {
     // Read the database path from the environment variable, or use in memory if not set
@@ -66,8 +53,11 @@ async fn create_socket_server() -> TcpListener {
 #[tokio::main]
 async fn main() {
     // Initialize the database and the WebSocket server
-    let mut app_state = AppState::new(create_database());
+    let database = Arc::new(Mutex::new(create_database()));
+    let block_manager = Arc::new(Mutex::new(BlockManager::new(Arc::clone(&database))));
     let turtle_manager = Arc::new(Mutex::new(TurtleManager::new()));
+    let gateway = Gateway::new();
+
     let listener = create_socket_server().await;
 
     // Testing loop
@@ -143,6 +133,7 @@ async fn main() {
     loop {
         let (stream, addr) = listener.accept().await.expect("Failed to accept connection");
         let turtle_manager = Arc::clone(&turtle_manager);
+        let server_write_stream = gateway.get_sender();
 
         println!("New client connected from {}, determining type", addr);
 
@@ -157,7 +148,8 @@ async fn main() {
                         // Simple text answer, either "turtle" or "client" for now.
                         match message.to_text().unwrap().trim().to_lowercase().as_str() {
                             "turtle" => {
-                                let turtle = Arc::new(Mutex::new(Turtle::new(ws_stream).await.unwrap()));
+                                let turtle = Turtle::new(ws_stream, server_write_stream).await.unwrap();
+                                let turtle = Arc::new(Mutex::new(turtle));
                                 turtle_manager.lock().await.add_turtle(turtle);
                             },
                             "client" => todo!(),

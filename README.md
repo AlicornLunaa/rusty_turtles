@@ -31,6 +31,28 @@ Each task is just what I call an ActionStack, or a list of actual actions to tak
     - Idle: does nothing
     - RC: Turtle is being remotely controlled
 
+### Communication payloads
+```json
+{
+    "type": "request",
+    "req_id": 0,
+    "oneshot": false,
+    "payload": {
+        "action": "forward",
+        "args": []
+    }
+}
+
+{
+    "type": "response",
+    "req_id": 0,
+    "payload": {
+        "success": true,
+        "error": null
+    }
+}
+```
+
 ### Tasks
 - MoveTo(x, y, z)
 - Dig(x, y, z)

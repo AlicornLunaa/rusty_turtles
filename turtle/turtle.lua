@@ -227,7 +227,8 @@ local action_table = {
 
         return { success = file ~= nil, error = err }
     end,
-    ["turtle_init"] = function(args)
+    ["turtle_init"] = function(args, socket, request_id)
+        -- Try location with File, then GPS, then manual entry
         local location_data
 
         if fs.exists("location.json") then

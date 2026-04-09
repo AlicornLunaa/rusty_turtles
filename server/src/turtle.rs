@@ -6,6 +6,8 @@ use tokio::{net::TcpStream, sync::{Mutex, mpsc, oneshot}, task::JoinHandle};
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 use futures_util::{SinkExt, StreamExt, stream::{SplitSink, SplitStream}};
 
+use crate::gateway::{Gateway, ServerMessage};
+
 /// Typings
 type TurtleSink = SplitSink<WebSocketStream<TcpStream>, Message>;
 type TurtleSource = SplitStream<WebSocketStream<TcpStream>>;
@@ -150,7 +152,7 @@ pub enum TurtleMessage {
 
 /// A struct representing a turtle, which implements the VirtualTurtle trait.
 pub struct Turtle {
-    write_stream: mpsc::Sender<TurtleMessage>,
+    turtle_write_stream: mpsc::Sender<TurtleMessage>,
     join_handle: JoinHandle<()>,
     x: i64,
     y: i64,
@@ -174,6 +176,15 @@ impl Turtle {
     }
 
     // Constructors
+    fn decode_server_request(request_id: u64, payload: Value) -> Result<ServerMessage, String> {
+        let action = payload["action"].as_str().unwrap_or("");
+        
+        match action {
+            "ping" => Ok(ServerMessage::Ping),
+            _ => Err("No server payload".to_string())
+        }
+    }
+
     async fn initial_handshake(ws_sender: &mut TurtleSink, ws_receiver: &mut TurtleSource) -> Result<(i64, i64, i64, Direction), String> {
         // This function will do the initial questioning for position
         let x;
@@ -223,7 +234,7 @@ impl Turtle {
         Ok((x, y, z, direction))
     }
 
-    fn spawn_background_thread(mut rx: mpsc::Receiver<TurtleMessage>, mut ws_sender: TurtleSink, mut ws_receiver: TurtleSource, background_valid_flag: Arc<Mutex<bool>>) -> JoinHandle<()> {
+    fn spawn_background_thread(mut rx: mpsc::Receiver<TurtleMessage>, mut ws_sender: TurtleSink, mut ws_receiver: TurtleSource, mut server_sender: mpsc::Sender<ServerMessage>, background_valid_flag: Arc<Mutex<bool>>) -> JoinHandle<()> {
         // This function spawns a background thread and takes full ownership of the websocket stream
         tokio::spawn(async move {
             // This background thread manages messages from tx by reading rx and sending it to the socket
@@ -284,8 +295,14 @@ impl Turtle {
                                     },
                                     None => {
                                         // No sender found, this is an unsolicited message
-                                        println!("Unsolicited message: {message}");
-                                        todo!();
+                                        match Turtle::decode_server_request(request_id, serde_json::from_str(message).unwrap()) {
+                                            Ok(server_message) => {
+                                                server_sender.send(server_message).await.unwrap();
+                                            },
+                                            Err(_) => {
+                                                println!("Ignoring message with no correct payload.");
+                                            },
+                                        }
                                     },
                                 }
                             },
@@ -302,18 +319,18 @@ impl Turtle {
         })
     }
 
-    pub async fn new(ws_stream: WebSocketStream<TcpStream>) -> Result<Self, String> {
+    pub async fn new(ws_stream: WebSocketStream<TcpStream>, server_stream: mpsc::Sender<ServerMessage>) -> Result<Self, String> {
         // Obtain turtle information via questioning
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
         let (tx, mut rx) = mpsc::channel::<TurtleMessage>(32);
         let valid_flag = Arc::new(Mutex::new(true));
 
         let (x, y, z, direction) = Self::initial_handshake(&mut ws_sender, &mut ws_receiver).await?;
-        let handle = Self::spawn_background_thread(rx, ws_sender, ws_receiver, Arc::clone(&valid_flag));
+        let handle = Self::spawn_background_thread(rx, ws_sender, ws_receiver, server_stream, Arc::clone(&valid_flag));
         
         // Return the turtle object which has the sender object too
         Ok(Self {
-            write_stream: tx,
+            turtle_write_stream: tx,
             join_handle: handle,
             x, y, z,
             direction,
@@ -339,7 +356,7 @@ impl Turtle {
         // Create JSON table with action and args
         let (tx, rx) = oneshot::channel::<Result<Message, TurtleError>>();
 
-        if let Err(e) = self.write_stream.send(TurtleMessage::SendRecv(Message::Text(payload.to_string().into()), tx)).await {
+        if let Err(e) = self.turtle_write_stream.send(TurtleMessage::SendRecv(Message::Text(payload.to_string().into()), tx)).await {
             // Something went wrong with the write stream
             return Err(TurtleError::SocketError(e.to_string()));
         }

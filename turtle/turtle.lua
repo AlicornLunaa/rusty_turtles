@@ -179,6 +179,19 @@ local action_table = {
         return textutils.serializeJSON({ success = success, error = err })
     end,
 
+    -- Custom directives
+    ["update_location"] = function(args)
+        local location_data = { x = args[1], y = args[2], z = args[3], direction = args[4] }
+
+        local file, err = fs.open("location.json", "w")
+
+        if file then
+            file.write(textutils.serializeJSON(location_data))
+            file.close()
+        end
+
+        return textutils.serializeJSON({ success = file ~= nil, error = err})
+    end,
     ["turtle_init"] = function(args)
         local location_data
 

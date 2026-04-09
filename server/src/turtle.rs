@@ -9,6 +9,16 @@ use futures_util::{SinkExt, StreamExt};
 /// Enums representing various parameters for turtle operations.
 #[derive(Clone, Debug)]
 pub enum Direction { NORTH, EAST, SOUTH, WEST }
+impl Direction {
+    fn to_value(&self) -> &str {
+        match self {
+            Direction::NORTH => "north",
+            Direction::EAST => "east",
+            Direction::SOUTH => "south",
+            Direction::WEST => "west",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum Side { LEFT, RIGHT }
@@ -305,7 +315,25 @@ impl VirtualTurtle for Turtle {
         let reason = result["error"].as_str();
 
         if success {
-            Ok(())
+            // Turtle moved forward, update position
+            match self.direction {
+                Direction::NORTH => self.z += 1,
+                Direction::EAST => self.x += 1,
+                Direction::SOUTH => self.z -= 1,
+                Direction::WEST => self.x -= 1,
+            }
+
+            // Update turtle with another RPC
+            let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
+            let success = result["success"].as_bool().unwrap_or(false);
+            let reason = result["error"].as_str();
+
+            // Error handling
+            if success {
+                Ok(())
+            } else {
+                Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
+            }
         } else {
             Err(TurtleError::VirtualError(reason.unwrap().to_string()))
         }
@@ -317,7 +345,25 @@ impl VirtualTurtle for Turtle {
         let reason = result["error"].as_str();
 
         if success {
-            Ok(())
+            // Turtle moved backward, update position
+            match self.direction {
+                Direction::NORTH => self.z -= 1,
+                Direction::EAST => self.x -= 1,
+                Direction::SOUTH => self.z += 1,
+                Direction::WEST => self.x += 1,
+            }
+
+            // Update turtle with another RPC
+            let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
+            let success = result["success"].as_bool().unwrap_or(false);
+            let reason = result["error"].as_str();
+
+            // Error handling
+            if success {
+                Ok(())
+            } else {
+                Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
+            }
         } else {
             Err(TurtleError::VirtualError(reason.unwrap().to_string()))
         }
@@ -329,7 +375,20 @@ impl VirtualTurtle for Turtle {
         let reason = result["error"].as_str();
 
         if success {
-            Ok(())
+            // Turtle moved up, update position
+            self.z += 1;
+
+            // Update turtle with another RPC
+            let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
+            let success = result["success"].as_bool().unwrap_or(false);
+            let reason = result["error"].as_str();
+
+            // Error handling
+            if success {
+                Ok(())
+            } else {
+                Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
+            }
         } else {
             Err(TurtleError::VirtualError(reason.unwrap().to_string()))
         }
@@ -341,7 +400,20 @@ impl VirtualTurtle for Turtle {
         let reason = result["error"].as_str();
 
         if success {
-            Ok(())
+            // Turtle moved down, update position
+            self.z -= 1;
+
+            // Update turtle with another RPC
+            let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
+            let success = result["success"].as_bool().unwrap_or(false);
+            let reason = result["error"].as_str();
+
+            // Error handling
+            if success {
+                Ok(())
+            } else {
+                Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
+            }
         } else {
             Err(TurtleError::VirtualError(reason.unwrap().to_string()))
         }
@@ -353,7 +425,25 @@ impl VirtualTurtle for Turtle {
         let reason = result["error"].as_str();
 
         if success {
-            Ok(())
+            // Turtle rotated, update direction
+            match self.direction {
+                Direction::NORTH => self.direction = Direction::WEST,
+                Direction::EAST => self.direction = Direction::NORTH,
+                Direction::SOUTH => self.direction = Direction::EAST,
+                Direction::WEST => self.direction = Direction::SOUTH,
+            }
+
+            // Update turtle with another RPC
+            let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
+            let success = result["success"].as_bool().unwrap_or(false);
+            let reason = result["error"].as_str();
+
+            // Error handling
+            if success {
+                Ok(())
+            } else {
+                Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
+            }
         } else {
             Err(TurtleError::VirtualError(reason.unwrap().to_string()))
         }
@@ -365,7 +455,25 @@ impl VirtualTurtle for Turtle {
         let reason = result["error"].as_str();
 
         if success {
-            Ok(())
+            // Turtle rotated, update direction
+            match self.direction {
+                Direction::NORTH => self.direction = Direction::EAST,
+                Direction::EAST => self.direction = Direction::SOUTH,
+                Direction::SOUTH => self.direction = Direction::WEST,
+                Direction::WEST => self.direction = Direction::NORTH,
+            }
+
+            // Update turtle with another RPC
+            let result = self.remote_procedure_call(json!({ "action": "update_location", "args": [self.x, self.y, self.z, self.direction.to_value()] })).await?;
+            let success = result["success"].as_bool().unwrap_or(false);
+            let reason = result["error"].as_str();
+
+            // Error handling
+            if success {
+                Ok(())
+            } else {
+                Err(TurtleError::VirtualError("Failure to save state to turtle?".to_string()))
+            }
         } else {
             Err(TurtleError::VirtualError(reason.unwrap().to_string()))
         }

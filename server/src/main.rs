@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 use crate::gateway::Gateway;
 use crate::managers::block_manager::BlockManager;
 use crate::managers::turtle_manager::TurtleManager;
-use crate::turtle::{Slot, Turtle, VirtualTurtle};
+use crate::turtle::{Turtle, VirtualTurtle, Slot};
 
 mod object_relations;
 mod managers;

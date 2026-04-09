@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::Mutex;
 
-use crate::turtle::Turtle;
+use crate::turtle::client::Turtle;
 
 pub struct TurtleManager {
     turtles: HashMap<u64, Arc<Mutex<Turtle>>>,

@@ -165,62 +165,6 @@ pub struct Turtle {
 
 impl Turtle {
     // Constructors
-    async fn initial_handshake(ws_sender: &mut TurtleSink, ws_receiver: &mut TurtleSource) -> Result<(i64, i64, i64, Direction), String> {
-        // Send request to the turtle
-        let payload = Payload::Request { id: 0, oneshot: false, data: json!({ "action": "turtle_init", "args": [] }) };
-
-        if let Err(e) = ws_sender.send(Message::Text(payload.encode().into())).await {
-            return Err(format!("Error with sending turtle init. {e}"));
-        }
-
-        // Wait for the turtle's response
-        while let Some(response) = ws_receiver.next().await {
-            match response {
-                Ok(Message::Text(text)) => {
-                    // Decode the payload and wait for a response
-                    let payload = Payload::decode(&text).unwrap();
-
-                    match payload {
-                        Payload::Request { id, oneshot, data } => {
-                            // This is not a response, forward it to the server
-                            todo!()
-                        },
-                        Payload::Response { id, data } => {
-                            // This IS a response, it must be ours
-                            let x = data["x"].as_i64().unwrap();
-                            let y = data["y"].as_i64().unwrap();
-                            let z = data["z"].as_i64().unwrap();
-                            
-                            let direction = match data["direction"].as_str() {
-                                Some("north") => Direction::NORTH,
-                                Some("east") => Direction::EAST,
-                                Some("south") => Direction::SOUTH,
-                                Some("west") => Direction::WEST,
-                                Some(_) => return Err("Invalid direction supplied from turtle.".to_string()),
-                                None => return Err("Invalid direction supplied from turtle.".to_string()),
-                            };
-
-                            return Ok((x, y, z, direction));
-                        },
-                    }
-                },
-                Ok(Message::Close(_)) => {
-                    return Err(format!("Connection closed prematurely."));
-                },
-                Err(e) => {
-                    eprintln!("Failed to initialize turtle. {e}");
-                    return Err(format!("Failed to initialize turtle. {e}"));
-                },
-                _ => {
-                    return Err(format!("Issue with message."));
-                },
-            }
-        }
-
-        // No response, likely dropped turtle
-        Err("No response from turtle.".to_string())
-    }
-
     fn spawn_worker_thread(client_id: u64, mut turtle_rx: mpsc::Receiver<TurtleMessage>, mut server_tx: mpsc::Sender<ServerMessage>, mut ws_sender: TurtleSink, mut ws_receiver: TurtleSource, background_valid_flag: Arc<Mutex<bool>>) -> JoinHandle<()> {
         // This function spawns a background thread and takes full ownership of the websocket stream
         tokio::spawn(async move {
@@ -336,14 +280,53 @@ impl Turtle {
         })
     }
 
+    async fn initial_handshake(turtle_tx: mpsc::Sender<TurtleMessage>) -> Result<(i64, i64, i64, Direction), String> {
+        // Send request to the turtle
+        let (tx, rx) = oneshot::channel::<Result<Value, TurtleError>>();
+
+        if let Err(e) = turtle_tx.send(TurtleMessage::SendRecv(json!({ "action": "turtle_init", "args": [] }).into(), tx)).await {
+            // Something went wrong with the write stream
+            return Err(e.to_string());
+        }
+
+        // Wait for the data back
+        match rx.await {
+            Ok(result) => {
+                if result.is_err() {
+                    return Err("No result from turtle's handshake".to_string());
+                }
+
+                let result = result.unwrap();
+                let x = result["x"].as_i64().unwrap();
+                let y = result["y"].as_i64().unwrap();
+                let z = result["z"].as_i64().unwrap();
+                
+                let direction = match result["direction"].as_str() {
+                    Some("north") => Direction::NORTH,
+                    Some("east") => Direction::EAST,
+                    Some("south") => Direction::SOUTH,
+                    Some("west") => Direction::WEST,
+                    Some(_) => return Err("Invalid direction supplied from turtle.".to_string()),
+                    None => return Err("Invalid direction supplied from turtle.".to_string()),
+                };
+
+                return Ok((x, y, z, direction));
+            },
+            Err(e) => {
+                // The send command failed to obtain a result, probably closed
+                Err(e.to_string())
+            },
+        }
+    }
+
     pub async fn new(id: u64, ws_stream: WebSocketStream<TcpStream>, server_tx: mpsc::Sender<ServerMessage>) -> Result<Self, String> {
         // Obtain turtle information via questioning
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
         let (tx, mut rx) = mpsc::channel::<TurtleMessage>(32);
         let valid_flag = Arc::new(Mutex::new(true));
 
-        let (x, y, z, direction) = Self::initial_handshake(&mut ws_sender, &mut ws_receiver).await?;
         let handle = Self::spawn_worker_thread(id, rx, server_tx, ws_sender, ws_receiver, Arc::clone(&valid_flag));
+        let (x, y, z, direction) = Self::initial_handshake(tx.clone()).await?;
         
         // Return the turtle object which has the sender object too
         Ok(Self {
@@ -381,8 +364,7 @@ impl Turtle {
 
         match rx.await {
             Ok(result) => {
-                let response: Value = serde_json::from_str(&result?.to_string()).unwrap();
-                Ok(response)
+                Ok(result?)
             },
             Err(e) => {
                 // The send command failed to obtain a result, probably closed

@@ -1,6 +1,8 @@
 -- This is a simple dumb terminal program for the turtle.
 -- It is intended to be the part of the program which executes commands
 -- given from the digital twin in rust.
+local turtle_req_id = 0
+
 local action_table = {
     ["forward"] = function(args)
         local success, err = turtle.forward()
@@ -180,12 +182,17 @@ local action_table = {
     end,
 
     -- Custom directives
-    ["start_gps_host"] = function(args, socket, request_id)
+    ["start_gps_host"] = function(args, socket, server_req_id)
         -- This starts a blocking job to host GPS
         local success = true
 
         function host()
-            socket.send(encapsulate_data(request_id, { success = true }))
+            socket.send(encapsulate_data({
+                type = "response",
+                res_id = server_req_id,
+                data = { success = true }
+            }))
+
             success = shell.execute("gps", "host", tostring(args[1]), tostring(args[2]), tostring(args[3]))
         end
 
@@ -194,26 +201,33 @@ local action_table = {
                 local message, is_binary = socket.receive()
         
                 if message then
-                    local request_id, command = decapsulate_data(message)
+                    local request = decapsulate_data(message)
                     
-                    if command.action == "stop_gps_host" then
+                    if request["type"] == "request" and request["data"]["action"] == "stop_gps_host" then
                         print("Received stop command.")
-                        socket.send(encapsulate_data({
-                            type = "response",
-                            res_id = request_id,
-                            data = { success = true }
-                        }))
+
+                        if not request["oneshot"] then
+                            socket.send(encapsulate_data({
+                                type = "response",
+                                res_id = request["req_id"],
+                                data = { success = true }
+                            }))
+                        end
+
                         return
-                    else
+                    elseif request["type"] == "request" then
                         print("Ignoring command, currently hosting GPS")
-                        socket.send(encapsulate_data({
-                            type = "response",
-                            res_id = request_id,
-                            data = {
-                                success = false,
-                                error = "GPS is currently running, cannot do anything else."
-                            }
-                        }))
+
+                        if not request["oneshot"] then
+                            socket.send(encapsulate_data({
+                                type = "response",
+                                res_id = request["req_id"],
+                                data = {
+                                    success = false,
+                                    error = "GPS is currently running, cannot do anything else."
+                                }
+                            }))
+                        end
                     end
                 end
             end
@@ -238,9 +252,22 @@ local action_table = {
 
         return { success = file ~= nil, error = err }
     end,
-    ["turtle_init"] = function(args, socket, request_id)
+    ["turtle_init"] = function(args, socket)
         -- Try location with File, then GPS, then manual entry
         local location_data
+
+        sleep(1)
+        socket.send(encapsulate_data({
+            type = "request",
+            oneshot = false,
+            req_id = turtle_req_id + 1,
+            data = {
+                action = "ping",
+            }
+        }))
+        turtle_req_id = turtle_req_id + 1
+        print(socket.receive())
+        sleep(1)
 
         if fs.exists("location.json") then
             local file = fs.open("location.json", "r")
@@ -300,9 +327,9 @@ function handle_command(socket, data)
         local err = { success = false, error = "Invalid action" }
         
         socket.send(encapsulate_data({
-                type = "response",
-                res_id = request_id,
-                data = err
+            type = "response",
+            res_id = request_id,
+            data = err
         }))
     end
 end

@@ -1,8 +1,12 @@
 /// This module handles path finding for robots
-mod pathfinding {
+pub mod pathfinding {
     use std::cmp::Ordering;
     use std::collections::{BinaryHeap, HashMap};
+    use tokio::time::Instant;
+
     use crate::{managers::block_manager::BlockManager, util::vector::Vector3};
+
+    const MAX_NODES: usize = 100000;
 
     #[derive(Copy, Clone, Eq, PartialEq)]
     struct Node {
@@ -27,14 +31,28 @@ mod pathfinding {
     }
 
     pub async fn find_path(blocks: &BlockManager, start: Vector3, end: Vector3) -> Option<Vec<Vector3>> {
+        let start_time = Instant::now();
+        print!("Searching DB for path, ");
+
         let mut came_from: HashMap<Vector3, Vector3> = HashMap::new();
         let mut g_score: HashMap<Vector3, i64> = HashMap::new();
         let mut open_set = BinaryHeap::new();
+        let mut nodes_explored = 0;
         
         g_score.insert(start, 0);
         open_set.push(Node { position: start, f_score: heuristic(start, end) });
 
         while let Some(Node { position: current, .. }) = open_set.pop() {
+            // Prevent memory leak
+            nodes_explored += 1;
+
+            if nodes_explored > MAX_NODES {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                println!("no path found, took {elapsed} seconds.");
+                return None;
+            }
+
+            // Goal found
             if current == end {
                 let mut path = vec![current];
                 let mut curr = current;
@@ -45,6 +63,10 @@ mod pathfinding {
                 }
 
                 path.reverse();
+
+                let elapsed = start_time.elapsed().as_secs_f64();
+                println!("found path in {elapsed} seconds.");
+
                 return Some(path);
             }
 
@@ -74,6 +96,9 @@ mod pathfinding {
                 }
             }
         }
+
+        let elapsed = start_time.elapsed().as_secs_f64();
+        println!("no path found, took {elapsed} seconds.");
         
         None
     }

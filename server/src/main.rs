@@ -9,7 +9,7 @@ use crate::gateway::Gateway;
 use crate::managers::block_manager::BlockManager;
 use crate::managers::object_relations;
 use crate::managers::turtle_manager::TurtleManager;
-use crate::turtle::{Turtle, VirtualTurtle, SmartTurtle, Slot};
+use crate::turtle::{SmartTurtle, Turtle, VirtualTurtle};
 
 mod pathfinding;
 mod managers;
@@ -86,20 +86,23 @@ async fn main() {
                     let action = async move {
                         let mut turtle_lock = turtle.lock().await;
 
-                        turtle_lock.move_to(2, 0, 0).await.unwrap();
-                        turtle_lock.move_to(-2, 0, 0).await.unwrap();
-                        turtle_lock.move_to(0, 0, 2).await.unwrap();
-                        turtle_lock.move_to(0, 0, -2).await.unwrap();
-                        turtle_lock.move_to(-2, 0, 0).await.unwrap();
-                        turtle_lock.move_to(2, 0, 0).await.unwrap();
-                        turtle_lock.move_to(0, 0, -2).await.unwrap();
-                        turtle_lock.move_to(0, 0, 2).await.unwrap();
-                        turtle_lock.move_to(0, 2, 0).await.unwrap();
-                        turtle_lock.move_to(0, -2, 0).await.unwrap();
+                        println!("Starting pathing");
+                        turtle_lock.path_to(4, 56, 12, true).await.unwrap();
+                        turtle_lock.path_to(-7, 58, 14, false).await.unwrap();
+                        // turtle_lock.move_to(2, 0, 0).await.unwrap();
+                        // turtle_lock.move_to(-2, 0, 0).await.unwrap();
+                        // turtle_lock.move_to(0, 0, 2).await.unwrap();
+                        // turtle_lock.move_to(0, 0, -2).await.unwrap();
+                        // turtle_lock.move_to(-2, 0, 0).await.unwrap();
+                        // turtle_lock.move_to(2, 0, 0).await.unwrap();
+                        // turtle_lock.move_to(0, 0, -2).await.unwrap();
+                        // turtle_lock.move_to(0, 0, 2).await.unwrap();
+                        // turtle_lock.move_to(0, 2, 0).await.unwrap();
+                        // turtle_lock.move_to(0, -2, 0).await.unwrap();
 
-                        turtle_lock.move_to(2, 2, 2).await.unwrap();
-                        turtle_lock.move_to(-4, -2, -4).await.unwrap();
-                        turtle_lock.move_to(2, 0, 2).await.unwrap();
+                        // turtle_lock.move_to(2, 2, 2).await.unwrap();
+                        // turtle_lock.move_to(-4, -2, -4).await.unwrap();
+                        // turtle_lock.move_to(2, 0, 2).await.unwrap();
 
                         if !turtle_lock.is_valid().await {
                             turtles_to_remove_inner.lock().await.insert(turtle_id);

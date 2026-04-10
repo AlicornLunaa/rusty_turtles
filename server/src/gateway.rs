@@ -3,7 +3,8 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use tokio::{sync::{Mutex, mpsc, oneshot}, task::JoinHandle};
 
-use crate::managers::{block_manager::BlockManager, turtle_manager::{self, TurtleManager}};
+use crate::{managers::{block_manager::BlockManager, turtle_manager::{self, TurtleManager}}, pathfinding, util::vector::Vector3};
+use crate::pathfinding::pathfinding::find_path;
 
 /// This module contains the server controller for incoming requests
 pub enum ServerAction {
@@ -11,6 +12,7 @@ pub enum ServerAction {
     SetupGPS,
     StopGPS,
     UpdateBlock(i64, i64, i64, String),
+    PathTo(i64, i64, i64, i64, i64, i64),
 }
 
 pub enum ServerMessage {
@@ -71,6 +73,11 @@ impl Gateway {
                                 ServerAction::Ping => {
                                     Gateway::ping_oneshot(client_id);
                                     let _ = tx.send(Ok(json!({ "success": true })));
+                                },
+                                ServerAction::PathTo(x1, y1, z1, x2, y2, z2) => {
+                                    let block_manager = block_manager.lock().await;
+                                    let res = find_path(&*block_manager, Vector3::new(x1, y1, z1), Vector3::new(x2, y2, z2)).await;
+                                    let _ = tx.send(Ok(json!({ "success": res.is_some(), "path": res.unwrap_or(Vec::new()) })));
                                 },
                                 _ => {
                                     println!("Unknown procedure action received");

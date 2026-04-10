@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
+use tokio::sync::oneshot;
 
-use crate::{gateway::{ServerAction, ServerMessage}, turtle::{SmartTurtle, client::Turtle, traits::VirtualTurtle, types::{Direction, FuelLevel, Side, Slot, TurtleError}}};
+use crate::{gateway::{ServerAction, ServerMessage}, turtle::{SmartTurtle, actions, client::Turtle, traits::VirtualTurtle, types::{Direction, FuelLevel, Side, Slot, TurtleError}}, util::vector::Vector3};
 
 /// Virtual turtle implementation for turtle
 impl VirtualTurtle for Turtle {
@@ -432,8 +433,67 @@ impl SmartTurtle for Turtle {
         Ok(())
     }
 
-    async fn path_to(&mut self, x: i64, y: i64, z: i64) -> Result<(), TurtleError> {
-        // Pathfinds to a location
-        todo!()
+    async fn path_to(&mut self, dest_x: i64, dest_y: i64, dest_z: i64, skip_last: bool) -> Result<(), TurtleError> {
+        // Pathfinds to a location, skip_last will stop the turtle from moving to the last spot in the path and instead face it
+        let server_tx = self.get_server_tx().clone();
+
+        // Iteratively loop to pathing towards the goal
+        loop {
+            // Ask server for path
+            let (src_x, src_y, src_z) = self.get_position();
+            let (tx, rx) = oneshot::channel::<Result<Value, String>>();
+            let action = ServerAction::PathTo(src_x, src_y, src_z, dest_x, dest_y, dest_z);
+            server_tx.send(ServerMessage::Procedure { client_id: self.get_id(), action, tx }).await.unwrap();
+    
+            let data = match rx.await {
+                Ok(Ok(data)) => data,
+                Ok(Err(e)) => return Err(TurtleError::VirtualError(e.to_string())),
+                Err(e) => return Err(TurtleError::SocketError(e.to_string())),
+            };
+    
+            let mut path: Vec<Vector3> = serde_json::from_value(data["path"].clone()).unwrap();
+    
+            // Bail out if no path at all could be found, which means it is unaccessible
+            if !data["success"].as_bool().unwrap_or(false) {
+                return Err(TurtleError::VirtualError("No viable path.".to_string()));
+            }
+
+            // Path to next goal
+            let mut try_again = false;
+            let last_spot = path.pop().unwrap_or(Vector3::new(dest_x, dest_y, dest_z));
+
+            for next in &path {
+                let pos = Vector3::from(self.get_position());
+                let delta = *next - pos;
+
+                if let Err(e) = self.move_to(delta.x, delta.y, delta.z).await {
+                    // Something went wrong on the path to it, restart the loop and try again
+                    eprintln!("Non-viable path {e}");
+                    try_again = true;
+                    break;
+                }
+            }
+
+            if try_again {
+                continue;
+            }
+
+            // No more path was blocked, we must be at the end
+            if skip_last {
+                // Just face towards it
+                let pos = Vector3::from(self.get_position());
+                let delta = last_spot - pos;
+                self.face_block(delta.x, delta.z).await?;
+            } else {
+                // Otherwise, move to it
+                let pos = Vector3::from(self.get_position());
+                let delta = last_spot - pos;
+                self.move_to(delta.x, delta.y, delta.z).await?;
+            }
+
+            break;
+        }
+
+        Ok(())
     }
 }

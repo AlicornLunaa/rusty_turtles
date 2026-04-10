@@ -1,7 +1,7 @@
 /// This module is responsible for managing blocks in the world, including updating block states and notifying visualizers of changes.
 use std::sync::Arc;
 
-use crate::object_relations::ORM;
+use crate::managers::object_relations::ORM;
 use shared::blocks::{Block, BlockNotification};
 use tokio::sync::Mutex;
 

@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use crate::turtle::{SmartTurtle, client::Turtle, traits::VirtualTurtle, types::{Direction, FuelLevel, Side, Slot, TurtleError}};
+use crate::{gateway::{ServerAction, ServerMessage}, turtle::{SmartTurtle, client::Turtle, traits::VirtualTurtle, types::{Direction, FuelLevel, Side, Slot, TurtleError}}};
 
 /// Virtual turtle implementation for turtle
 impl VirtualTurtle for Turtle {
@@ -317,6 +317,53 @@ impl SmartTurtle for Turtle {
             Err(TurtleError::VirtualError(reason.unwrap_or("Unspecified error").to_string()))
         }
     }
+
+    // Scanners
+    async fn scan_blocks(&self) -> Result<(String, String, String), TurtleError> {
+        // This function scans the front, top, and bottom blocks, then tells the server to save them
+        let server_tx = self.get_server_tx();
+        let (x, y, z) = self.get_position();
+        let (fx, fy, fz) = self.get_block_ahead();
+
+        let forward = match self.inspect().await {
+            Ok(data) => {
+                // Block here
+                data["name"].as_str().unwrap_or("minecraft:air").to_string()
+            },
+            Err(_) => {
+                // No block here
+                "minecraft:air".to_string()
+            },
+        };
+
+        let down = match self.inspect_down().await {
+            Ok(data) => {
+                // Block here
+                data["name"].as_str().unwrap_or("minecraft:air").to_string()
+            },
+            Err(_) => {
+                // No block here
+                "minecraft:air".to_string()
+            },
+        };
+
+        let up = match self.inspect_up().await {
+            Ok(data) => {
+                // Block here
+                data["name"].as_str().unwrap_or("minecraft:air").to_string()
+            },
+            Err(_) => {
+                // No block here
+                "minecraft:air".to_string()
+            },
+        };
+
+        server_tx.send(ServerMessage::Oneshot { client_id: self.get_id(), action: ServerAction::UpdateBlock(fx, fy, fz, forward.clone())}).await.unwrap();
+        server_tx.send(ServerMessage::Oneshot { client_id: self.get_id(), action: ServerAction::UpdateBlock(x, y + 1, z, up.clone())}).await.unwrap();
+        server_tx.send(ServerMessage::Oneshot { client_id: self.get_id(), action: ServerAction::UpdateBlock(x, y - 1, z, down.clone())}).await.unwrap();
+
+        Ok((forward.to_string(), up.to_string(), down.to_string()))
+    }
     
     // Movement functions
     async fn face_block(&mut self, x: i64, z: i64) -> Result<(), TurtleError> {
@@ -359,21 +406,27 @@ impl SmartTurtle for Turtle {
         for _ in 0..dy.abs() {
             if dy > 0 {
                 self.up().await?;
+                self.scan_blocks().await?;
             } else {
                 self.down().await?;
+                self.scan_blocks().await?;
             }
         }
 
         self.face_block(dx, 0).await?;
+        self.scan_blocks().await?;
 
         for _ in 0..dx.abs() {
             self.forward().await?;
+            self.scan_blocks().await?;
         }
 
         self.face_block(0, dz).await?;
+        self.scan_blocks().await?;
 
         for _ in 0..dz.abs() {
             self.forward().await?;
+            self.scan_blocks().await?;
         }
 
         Ok(())

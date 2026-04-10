@@ -11,6 +11,7 @@ use crate::{gateway::{ServerAction, ServerMessage}, payload::Payload, turtle::ty
 pub struct Turtle {
     id: u64,
     turtle_write_stream: mpsc::Sender<TurtleMessage>,
+    gateway_write_stream: mpsc::Sender<ServerMessage>,
     join_handle: JoinHandle<()>,
     x: i64,
     y: i64,
@@ -178,13 +179,14 @@ impl Turtle {
         let (tx, rx) = mpsc::channel::<TurtleMessage>(32);
         let valid_flag = Arc::new(Mutex::new(true));
 
-        let handle = Self::spawn_worker_thread(id, rx, server_tx, ws_sender, ws_receiver, Arc::clone(&valid_flag));
+        let handle = Self::spawn_worker_thread(id, rx, server_tx.clone(), ws_sender, ws_receiver, Arc::clone(&valid_flag));
         let (x, y, z, direction) = Self::initial_handshake(tx.clone()).await?;
         
         // Return the turtle object which has the sender object too
         Ok(Self {
             id,
             turtle_write_stream: tx,
+            gateway_write_stream: server_tx,
             join_handle: handle,
             x, y, z,
             direction,
@@ -197,12 +199,35 @@ impl Turtle {
         *self.valid.lock().await
     }
 
+    pub fn get_id(&self) -> u64 {
+        self.id
+    }
+
     pub fn get_position(&self) -> (i64, i64, i64) {
         (self.x, self.y, self.z)
     }
 
     pub fn get_direction(&self) -> Direction {
         self.direction.clone()
+    }
+
+    pub fn get_block_ahead(&self) -> (i64, i64, i64) {
+        // Returns the location of the block ahead
+        let mut x = self.x;
+        let mut z = self.z;
+
+        match self.get_direction() {
+            Direction::NORTH => z -= 1,
+            Direction::EAST => x += 1,
+            Direction::SOUTH => z += 1,
+            Direction::WEST => x -= 1,
+        }
+
+        (x, self.y, z)
+    }
+
+    pub(super) fn get_server_tx(&self) -> &mpsc::Sender<ServerMessage> {
+        &self.gateway_write_stream
     }
 
     // Private helpers for communication with the actual turtle

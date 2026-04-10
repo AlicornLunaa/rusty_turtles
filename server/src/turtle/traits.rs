@@ -66,6 +66,9 @@ pub trait SmartTurtle {
     async fn start_gps_host(&self) -> Result<(), TurtleError>;
     async fn stop_gps_host(&self) -> Result<(), TurtleError>;
 
+    // Auto scanners
+    async fn scan_blocks(&self) -> Result<(String, String, String), TurtleError>;
+
     // Smart movement
     async fn face_block(&mut self, x: i64, z: i64) -> Result<(), TurtleError>;
     async fn move_to(&mut self, dx: i64, dy: i64, dz: i64) -> Result<(), TurtleError>;

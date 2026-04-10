@@ -10,6 +10,7 @@ pub enum ServerAction {
     Ping,
     SetupGPS,
     StopGPS,
+    UpdateBlock(i64, i64, i64, String),
 }
 
 pub enum ServerMessage {
@@ -39,36 +40,48 @@ impl Gateway {
         let (tx, mut rx) = mpsc::channel::<ServerMessage>(32);
 
         // Spawn gateway thread to handle incoming requests
-        let join_handle = tokio::spawn(async move {
-            println!("Starting gateway thread");
+        let join_handle = tokio::spawn({
+            let turtle_manager = Arc::clone(&turtle_manager);
+            let block_manager = Arc::clone(&block_manager);
 
-            while let Some(message) = rx.recv().await {
-                match message {
-                    ServerMessage::Oneshot { client_id, action } => {
-                        match action {
-                            ServerAction::Ping => {
-                                Gateway::ping_oneshot(client_id);
-                            },
-                            _ => {
-                                println!("Unknown oneshot action received");
+            async move {
+                println!("Starting gateway thread");
+
+                while let Some(message) = rx.recv().await {
+                    match message {
+                        ServerMessage::Oneshot { client_id, action } => {
+                            match action {
+                                ServerAction::Ping => {
+                                    Gateway::ping_oneshot(client_id);
+                                },
+                                ServerAction::UpdateBlock(x, y, z, block) => {
+                                    if block != "minecraft:air" {
+                                        block_manager.lock().await.update_block(x, y, z, block).await.unwrap();
+                                    } else {
+                                        block_manager.lock().await.remove_block(x, y, z).await.unwrap();
+                                    }
+                                },
+                                _ => {
+                                    println!("Unknown oneshot action received");
+                                }
                             }
-                        }
-                    },
-                    ServerMessage::Procedure { client_id, action, tx } => {
-                        match action {
-                            ServerAction::Ping => {
-                                Gateway::ping_oneshot(client_id);
-                                let _ = tx.send(Ok(json!({ "success": true })));
-                            },
-                            _ => {
-                                println!("Unknown procedure action received");
+                        },
+                        ServerMessage::Procedure { client_id, action, tx } => {
+                            match action {
+                                ServerAction::Ping => {
+                                    Gateway::ping_oneshot(client_id);
+                                    let _ = tx.send(Ok(json!({ "success": true })));
+                                },
+                                _ => {
+                                    println!("Unknown procedure action received");
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            println!("Gateway thread ended");
+                println!("Gateway thread ended");
+            }
         });
 
         Gateway {

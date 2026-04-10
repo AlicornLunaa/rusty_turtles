@@ -317,4 +317,50 @@ impl SmartTurtle for Turtle {
             Err(TurtleError::VirtualError(reason.unwrap_or("Unspecified error").to_string()))
         }
     }
+    
+    // Movement functions
+    async fn move_relative(&mut self, dx: i64, dy: i64, dz: i64) -> Result<(), TurtleError> {
+        // Moves to a spot
+        todo!()
+    }
+
+    async fn move_to(&mut self, x: i64, y: i64, z: i64) -> Result<(), TurtleError> {
+        // Pathfinds to a location
+        todo!()
+    }
+
+    async fn face_block(&mut self, x: i64, z: i64) -> Result<(), TurtleError> {
+        // Get the current direction
+        let current_direction = self.get_direction() as i8;
+        
+        // Convert x and z offsets to a target direction
+        let new_direction = match (x.signum(), z.signum()) {
+            (1, 0) => Direction::EAST,
+            (-1, 0) => Direction::WEST,
+            (0, -1) => Direction::NORTH,
+            (0, 1) => Direction::SOUTH,
+            (0, 0) => return Ok(()), // No offset, no need to turn
+            _ => return Err(TurtleError::VirtualError("Non-cardinal offset".to_string()))
+        } as i8;
+
+        // Calculate the number of 90-degree right turns needed
+        let right_turns = (new_direction - current_direction).rem_euclid(4);
+
+        // Execute the most efficient turns
+        match right_turns {
+            1 => {
+                self.turn_right().await?;
+            }
+            2 => {
+                self.turn_right().await?;
+                self.turn_right().await?;
+            }
+            3 => {
+                self.turn_left().await?;
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
 }

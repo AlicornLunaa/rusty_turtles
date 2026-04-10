@@ -65,4 +65,9 @@ pub trait SmartTurtle {
     // GPS functions
     async fn start_gps_host(&self) -> Result<(), TurtleError>;
     async fn stop_gps_host(&self) -> Result<(), TurtleError>;
+
+    // Smart movement
+    async fn move_relative(&mut self, dx: i64, dy: i64, dz: i64) -> Result<(), TurtleError>;
+    async fn move_to(&mut self, x: i64, y: i64, z: i64) -> Result<(), TurtleError>;
+    async fn face_block(&mut self, x: i64, z: i64) -> Result<(), TurtleError>;
 }

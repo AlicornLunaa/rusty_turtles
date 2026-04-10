@@ -25,6 +25,10 @@ pub struct Gateway {
 }
 
 impl Gateway {
+    fn ping_oneshot(id: u64){
+        println!("Ping received from {id}");
+    }
+
     async fn start_gps_procedure(){
         // This procedure finds 4 turtles which are not in use, tells them to move out into a constellation, then host GPS
         // for another turtle to locate itself for bootstrapping
@@ -43,7 +47,7 @@ impl Gateway {
                     ServerMessage::Oneshot { client_id, action } => {
                         match action {
                             ServerAction::Ping => {
-                                println!("Ping received");
+                                Gateway::ping_oneshot(client_id);
                             },
                             _ => {
                                 println!("Unknown oneshot action received");
@@ -53,7 +57,7 @@ impl Gateway {
                     ServerMessage::Procedure { client_id, action, tx } => {
                         match action {
                             ServerAction::Ping => {
-                                println!("Ping received");
+                                Gateway::ping_oneshot(client_id);
                                 let _ = tx.send(Ok(json!({ "success": true })));
                             },
                             _ => {

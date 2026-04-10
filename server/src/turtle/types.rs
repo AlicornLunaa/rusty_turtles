@@ -16,12 +16,13 @@ pub enum TurtleMessage {
     Send(Value),
 }
 
+#[repr(u8)]
 #[derive(Clone, Debug)]
 pub enum Direction {
-    NORTH,
-    EAST,
-    SOUTH,
-    WEST,
+    NORTH = 0,
+    EAST = 1,
+    SOUTH = 2,
+    WEST = 3,
 }
 
 impl Direction {

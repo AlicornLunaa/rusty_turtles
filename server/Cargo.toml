@@ -11,3 +11,4 @@ shared = { path = "../shared" }
 tokio = { version = "1.51.1", features = ["full"] }
 tokio-tungstenite = "0.29.0"
 futures-util = "0.3.32"
+serde = { version = "1.0.228", features = ["derive"] }

@@ -8,14 +8,16 @@ use tokio::sync::Mutex;
 use crate::gateway::Gateway;
 use crate::managers::block_manager::BlockManager;
 use crate::managers::turtle_manager::TurtleManager;
-use crate::turtle::{Turtle, VirtualTurtle, Slot};
+use crate::turtle::{Turtle, VirtualTurtle, SmartTurtle, Slot};
 
 mod object_relations;
+mod pathfinding;
 mod managers;
 mod payload;
 mod gateway;
 mod turtle;
 mod client;
+mod util;
 
 const DEFAULT_PORT: u16 = 8080;
 
@@ -61,73 +63,83 @@ async fn main() {
     let listener = create_socket_server().await;
 
     // Testing loop
-    let manager = Arc::clone(&turtle_manager);
-    tokio::spawn(async move {
-        // Spawn a thread which every 10 seconds spawns a thread to communicate with turtles
-        loop {
-            let turtles_to_remove = Arc::new(Mutex::new(HashSet::new()));
-            let mut handles = Vec::new();
+    tokio::spawn({
+        let turtle_manager = Arc::clone(&turtle_manager);
+        let block_manager = Arc::clone(&block_manager);
+        
+        async move {
+            // Spawn a thread which every 10 seconds spawns a thread to communicate with turtles
+            loop {
+                let turtles_to_remove = Arc::new(Mutex::new(HashSet::new()));
+                let mut handles = Vec::new();
 
-            for (id, turtle) in manager.lock().await.iter_turtles_mut() {
-                if !turtle.lock().await.is_valid().await {
-                    turtles_to_remove.lock().await.insert(*id);
-                    continue;
+                for (id, turtle) in turtle_manager.lock().await.iter_turtles_mut() {
+                    if !turtle.lock().await.is_valid().await {
+                        turtles_to_remove.lock().await.insert(*id);
+                        continue;
+                    }
+
+                    let turtle = Arc::clone(turtle);
+                    let turtle_id = *id;
+                    let turtles_to_remove_inner = Arc::clone(&turtles_to_remove);
+                    
+                    let action = async move {
+                        let mut turtle_lock = turtle.lock().await;
+
+                        for _ in 0..4 {
+                            if let Err(e) = turtle_lock.forward().await { println!("{e}"); break; }
+                            if let Err(e) = turtle_lock.forward().await { println!("{e}"); break; }
+
+                            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                            turtle_lock.face_block(0, 1).await.unwrap();
+                            tokio::time::sleep(tokio::time::Duration::from_millis(10000)).await;
+                            turtle_lock.face_block(0, -1).await.unwrap();
+                            turtle_lock.face_block(1, -0).await.unwrap();
+                            
+                            turtle_lock.select(Slot::SLOT16).await;
+                            if let Err(_) = turtle_lock.equip_left().await { break; }
+                            turtle_lock.select(Slot::SLOT1).await;
+                            if let Err(e) = turtle_lock.dig(None).await {
+                                println!("{e}");
+                            }
+                            turtle_lock.select(Slot::SLOT16).await;
+                            if let Err(_) = turtle_lock.equip_left().await { break; }
+
+                            if let Err(_) = turtle_lock.back().await { break; }
+                            if let Err(_) = turtle_lock.back().await { break; }
+                            if let Err(_) = turtle_lock.turn_left().await { break; }
+
+                            for i in 1..=16 {
+                                turtle_lock.select(Slot::from_u8(i)).await;
+                            }
+                        }
+
+                        if !turtle_lock.is_valid().await {
+                            turtles_to_remove_inner.lock().await.insert(turtle_id);
+                        }
+                    };
+
+                    handles.push(action);
                 }
-
-                let turtle = Arc::clone(turtle);
-                let turtle_id = *id;
-                let turtles_to_remove_inner = Arc::clone(&turtles_to_remove);
                 
-                let action = async move {
-                    let mut turtle_lock = turtle.lock().await;
+                // Run all turtle actions concurrently
+                futures_util::future::join_all(handles).await;
 
-                    for _ in 0..4 {
-                        if let Err(e) = turtle_lock.forward().await { println!("{e}"); break; }
-                        if let Err(e) = turtle_lock.forward().await { println!("{e}"); break; }
-                        
-                        turtle_lock.select(Slot::SLOT16).await;
-                        if let Err(_) = turtle_lock.equip_left().await { break; }
-                        turtle_lock.select(Slot::SLOT1).await;
-                        if let Err(e) = turtle_lock.dig(None).await {
-                            println!("{e}");
-                        }
-                        turtle_lock.select(Slot::SLOT16).await;
-                        if let Err(_) = turtle_lock.equip_left().await { break; }
-
-                        if let Err(_) = turtle_lock.back().await { break; }
-                        if let Err(_) = turtle_lock.back().await { break; }
-                        if let Err(_) = turtle_lock.turn_left().await { break; }
-
-                        for i in 1..=16 {
-                            turtle_lock.select(Slot::from_u8(i)).await;
-                        }
+                {
+                    // Remove turtles marked as invalid
+                    let mut manager = turtle_manager.lock().await;
+                    let mut turtles_to_remove = turtles_to_remove.lock().await;
+        
+                    for i in turtles_to_remove.iter() {
+                        println!("Removing turtle {i}");
+                        manager.remove_turtle(*i);
                     }
-
-                    if !turtle_lock.is_valid().await {
-                        turtles_to_remove_inner.lock().await.insert(turtle_id);
-                    }
-                };
-
-                handles.push(action);
-            }
-            
-            // Run all turtle actions concurrently
-            futures_util::future::join_all(handles).await;
-
-            {
-                // Remove turtles marked as invalid
-                let mut manager = manager.lock().await;
-                let mut turtles_to_remove = turtles_to_remove.lock().await;
-    
-                for i in turtles_to_remove.iter() {
-                    println!("Removing turtle {i}");
-                    manager.remove_turtle(*i);
+        
+                    turtles_to_remove.clear();
                 }
-    
-                turtles_to_remove.clear();
-            }
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
+            }
         }
     });
 

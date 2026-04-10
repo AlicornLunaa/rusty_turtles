@@ -11,3 +11,4 @@ luac.out
 # Runtime files
 .env
 .craftos
+*.db

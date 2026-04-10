@@ -86,33 +86,20 @@ async fn main() {
                     let action = async move {
                         let mut turtle_lock = turtle.lock().await;
 
-                        for _ in 0..4 {
-                            if let Err(e) = turtle_lock.forward().await { println!("{e}"); break; }
-                            if let Err(e) = turtle_lock.forward().await { println!("{e}"); break; }
+                        turtle_lock.move_to(2, 0, 0).await.unwrap();
+                        turtle_lock.move_to(-2, 0, 0).await.unwrap();
+                        turtle_lock.move_to(0, 0, 2).await.unwrap();
+                        turtle_lock.move_to(0, 0, -2).await.unwrap();
+                        turtle_lock.move_to(-2, 0, 0).await.unwrap();
+                        turtle_lock.move_to(2, 0, 0).await.unwrap();
+                        turtle_lock.move_to(0, 0, -2).await.unwrap();
+                        turtle_lock.move_to(0, 0, 2).await.unwrap();
+                        turtle_lock.move_to(0, 2, 0).await.unwrap();
+                        turtle_lock.move_to(0, -2, 0).await.unwrap();
 
-                            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-                            turtle_lock.face_block(0, 1).await.unwrap();
-                            tokio::time::sleep(tokio::time::Duration::from_millis(10000)).await;
-                            turtle_lock.face_block(0, -1).await.unwrap();
-                            turtle_lock.face_block(1, -0).await.unwrap();
-                            
-                            turtle_lock.select(Slot::SLOT16).await;
-                            if let Err(_) = turtle_lock.equip_left().await { break; }
-                            turtle_lock.select(Slot::SLOT1).await;
-                            if let Err(e) = turtle_lock.dig(None).await {
-                                println!("{e}");
-                            }
-                            turtle_lock.select(Slot::SLOT16).await;
-                            if let Err(_) = turtle_lock.equip_left().await { break; }
-
-                            if let Err(_) = turtle_lock.back().await { break; }
-                            if let Err(_) = turtle_lock.back().await { break; }
-                            if let Err(_) = turtle_lock.turn_left().await { break; }
-
-                            for i in 1..=16 {
-                                turtle_lock.select(Slot::from_u8(i)).await;
-                            }
-                        }
+                        turtle_lock.move_to(2, 2, 2).await.unwrap();
+                        turtle_lock.move_to(-4, -2, -4).await.unwrap();
+                        turtle_lock.move_to(2, 0, 2).await.unwrap();
 
                         if !turtle_lock.is_valid().await {
                             turtles_to_remove_inner.lock().await.insert(turtle_id);

@@ -239,7 +239,7 @@ impl Turtle {
         }
     }
 
-    pub async fn move_relative(&mut self, dx: i64, dy: i64, dz: i64) -> Result<(), TurtleError> {
+    pub(super) async fn move_relative(&mut self, dx: i64, dy: i64, dz: i64) -> Result<(), TurtleError> {
         // Update by deltas
         self.x += dx;
         self.y += dy;
@@ -258,7 +258,7 @@ impl Turtle {
         }
     }
 
-    pub async fn rotate_direction(&mut self, direction: Direction) -> Result<(), TurtleError> {
+    pub(super) async fn rotate_direction(&mut self, direction: Direction) -> Result<(), TurtleError> {
         self.direction = direction;
         self.move_relative(0, 0, 0).await
     }

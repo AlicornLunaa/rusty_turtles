@@ -256,7 +256,6 @@ local action_table = {
         -- Try location with File, then GPS, then manual entry
         local location_data
 
-        sleep(1)
         socket.send(encapsulate_data({
             type = "request",
             oneshot = false,
@@ -267,7 +266,6 @@ local action_table = {
         }))
         turtle_req_id = turtle_req_id + 1
         print(socket.receive())
-        sleep(1)
 
         if fs.exists("location.json") then
             local file = fs.open("location.json", "r")

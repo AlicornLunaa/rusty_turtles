@@ -319,16 +319,6 @@ impl SmartTurtle for Turtle {
     }
     
     // Movement functions
-    async fn move_relative(&mut self, dx: i64, dy: i64, dz: i64) -> Result<(), TurtleError> {
-        // Moves to a spot
-        todo!()
-    }
-
-    async fn move_to(&mut self, x: i64, y: i64, z: i64) -> Result<(), TurtleError> {
-        // Pathfinds to a location
-        todo!()
-    }
-
     async fn face_block(&mut self, x: i64, z: i64) -> Result<(), TurtleError> {
         // Get the current direction
         let current_direction = self.get_direction() as i8;
@@ -362,5 +352,35 @@ impl SmartTurtle for Turtle {
         }
 
         Ok(())
+    }
+
+    async fn move_to(&mut self, dx: i64, dy: i64, dz: i64) -> Result<(), TurtleError> {
+        // Moves to a spot without pathfinding, first elevation, then x, then z
+        for _ in 0..dy.abs() {
+            if dy > 0 {
+                self.up().await?;
+            } else {
+                self.down().await?;
+            }
+        }
+
+        self.face_block(dx, 0).await?;
+
+        for _ in 0..dx.abs() {
+            self.forward().await?;
+        }
+
+        self.face_block(0, dz).await?;
+
+        for _ in 0..dz.abs() {
+            self.forward().await?;
+        }
+
+        Ok(())
+    }
+
+    async fn path_to(&mut self, x: i64, y: i64, z: i64) -> Result<(), TurtleError> {
+        // Pathfinds to a location
+        todo!()
     }
 }

@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use serde_json::Value;
 use futures_util::{SinkExt, StreamExt};
 use tokio::{sync::{Mutex, mpsc, oneshot}, task::JoinHandle};
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{Message, http::response};
 
 use crate::{gateway::{ServerAction, ServerMessage}, turtle::{TurtleInit, TurtleQuery, types::*}};
 
@@ -303,5 +303,55 @@ impl Turtle {
 impl Drop for Turtle {
     fn drop(&mut self) {
         self.join_handle.abort();
+    }
+}
+
+/// Simple helper to build action lists for a turtle
+struct TurtleSequence<'a> {
+    turtle: &'a Turtle,
+    queue: Vec<TurtleAction>,
+}
+
+impl<'a> TurtleSequence<'a> {
+    pub fn new(turtle: &'a mut Turtle) -> Self {
+        Self { turtle, queue: Vec::new() }
+    }
+
+    pub fn forward(mut self) -> Self {
+        self.queue.push(TurtleAction::Forward);
+        self
+    }
+
+    pub fn back(mut self) -> Self {
+        self.queue.push(TurtleAction::Back);
+        self
+    }
+
+    pub fn turn_right(mut self) -> Self {
+        self.queue.push(TurtleAction::TurnRight);
+        self
+    }
+    
+    pub fn turn_left(mut self) -> Self {
+        self.queue.push(TurtleAction::TurnLeft);
+        self
+    }
+
+    pub fn up(mut self) -> Self {
+        self.queue.push(TurtleAction::Up);
+        self
+    }
+
+    pub fn down(mut self) -> Self {
+        self.queue.push(TurtleAction::Down);
+        self
+    }
+
+    // The only async function is the one that fires the payload
+    pub async fn execute(self) -> Result<u64, TurtleError> {
+        match self.turtle.execute_batch(self.queue).await {
+            Ok(response) => Ok(response.last_action),
+            Err(err) => Err(err),
+        }
     }
 }

@@ -3,6 +3,18 @@
 -- given from the digital twin in rust.
 local turtle_req_id = 0
 
+local function query_server(socket, data)
+    socket.send(textutils.serializeJSON({
+        type = "Query",
+        id = turtle_req_id + 1,
+        data = data
+    }))
+
+    turtle_req_id = turtle_req_id + 1
+
+    return socket.receive()
+end
+
 local action_table = {
     -- Movement
     ["Forward"] = function(args)
@@ -126,8 +138,8 @@ local action_table = {
         local success = true
 
         function host()
-            socket.send(encapsulate_data({
-                type = "response",
+            socket.send(textutils.serializeJSON({
+                type = "Response",
                 res_id = server_req_id,
                 data = { success = true }
             }))
@@ -181,6 +193,7 @@ local action_table = {
     end,
     ["UpdateLocation"] = function(args)
         local location_data = { x = args["x"], y = args["y"], z = args["z"], direction = args["direction"] }
+        print(args)
 
         local file, err = fs.open("location.json", "w")
 
@@ -262,13 +275,7 @@ local query_table = {
         -- Try location with File, then GPS, then manual entry
         local location_data
 
-        socket.send(textutils.serializeJSON({
-            type = "Query",
-            id = turtle_req_id + 1,
-            data = { type = "Ping" }
-        }))
-        turtle_req_id = turtle_req_id + 1
-        print(socket.receive())
+        print(query_server(socket, { type = "Ping" }))
 
         if fs.exists("location.json") then
             local file = fs.open("location.json", "r")
@@ -327,7 +334,7 @@ function handle_command(socket, data)
             local action = action_table[command["action"]]
 
             if action then
-                local result = action(command, socket, req_id)
+                local result = action(command["args"], socket, req_id)
 
                 if result and not result.success then
                     last_reason = result.reason
@@ -358,7 +365,7 @@ function handle_command(socket, data)
             local action = action_table[command["action"]]
 
             if action then
-                local result = action(command, socket, req_id)
+                local result = action(command["args"], socket, req_id)
 
                 if result and not result.success then
                     break

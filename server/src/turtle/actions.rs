@@ -521,8 +521,14 @@ impl SmartTurtle for Turtle {
 
                 if let Err(e) = self.move_to(delta.x, delta.y, delta.z).await {
                     // Something went wrong on the path to it, restart the loop and try again
-                    eprintln!("Non-viable path {e}");
-                    try_again = true;
+                    match e {
+                        TurtleError::VirtualError(e) => {
+                            eprintln!("Non-viable path {e}");
+                            try_again = true;
+                        },
+                        TurtleError::SocketError(_) => return Err(e),
+                    }
+
                     break;
                 }
             }

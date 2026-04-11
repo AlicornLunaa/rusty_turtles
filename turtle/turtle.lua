@@ -2,6 +2,7 @@
 -- It is intended to be the part of the program which executes commands
 -- given from the digital twin in rust.
 local turtle_req_id = 0
+local should_exit = false
 
 local function query_server(socket, data)
     socket.send(textutils.serializeJSON({
@@ -130,6 +131,10 @@ local action_table = {
     ["Craft"] = function(args)
         local success, err = turtle.craft(args["limit"])
         return { success = success, reason = err }
+    end,
+    ["Quit"] = function(args)
+        should_exit = true
+        return { success = true }
     end,
 
     -- Custom
@@ -382,7 +387,7 @@ function main()
     local SERVER_URL = "ws://localhost:8080"
     local ws = nil
 
-    local success, err = pcall(function()
+    function runtime()
         print("Connecting to server at " .. SERVER_URL)
         ws = http.websocket(SERVER_URL)
     
@@ -398,7 +403,7 @@ function main()
         print("Connected to server at " .. SERVER_URL)
     
         -- Main runtime to listen to commands from the server
-        while true do
+        while not should_exit do
             local message, is_binary = ws.receive()
     
             if message then
@@ -420,11 +425,15 @@ function main()
                 ws.send("turtle")
             end
         end
-    end )
+    end
+
+    local success, err = pcall(runtime)
 
     -- Print out the error problem
-    if err then
+    while err ~= "Terminated" do
         print(err)
+        sleep(2)
+        success, err = pcall(runtime)
     end
 
     -- Cleanup main

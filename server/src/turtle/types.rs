@@ -100,6 +100,7 @@ pub enum TurtleAction {
 
     // Misc
     Craft{limit: Option<u8>},
+    Quit,
     StartGpsHost,
     StopGpsHost,
     UpdateLocation{x: i64, y: i64, z: i64, direction: Direction}

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{sync::{Mutex, mpsc, oneshot}, task::JoinHandle};
 
@@ -7,6 +8,8 @@ use crate::{managers::{block_manager::BlockManager, turtle_manager::{self, Turtl
 use crate::pathfinding::pathfinding::find_path;
 
 /// This module contains the server controller for incoming requests
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "args")]
 pub enum ServerAction {
     Ping,
     SetupGPS,

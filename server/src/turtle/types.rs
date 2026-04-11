@@ -1,7 +1,9 @@
 use std::fmt;
 
 use futures_util::stream::{SplitSink, SplitStream};
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use serde_repr::{Deserialize_repr, Serialize_repr};
 use tokio::{net::TcpStream, sync::oneshot};
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
@@ -12,12 +14,12 @@ pub type TurtleSocket = WebSocketStream<TcpStream>;
 
 /// Enums representing various parameters for turtle operations.
 pub enum TurtleMessage {
-    SendRecv(Value, oneshot::Sender<Result<Value, TurtleError>>),
-    Send(Value),
+    Action { actions: Vec<TurtleAction>, return_tx: Option<oneshot::Sender<TurtleResponse>> },
+    Query { query: Value, response: oneshot::Sender<TurtleResponse> }
 }
 
 #[repr(u8)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Direction {
     NORTH = 0,
     EAST = 1,
@@ -25,34 +27,14 @@ pub enum Direction {
     WEST = 3,
 }
 
-impl Direction {
-    pub fn to_value(&self) -> &str {
-        match self {
-            Direction::NORTH => "north",
-            Direction::EAST => "east",
-            Direction::SOUTH => "south",
-            Direction::WEST => "west",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Side {
     LEFT,
     RIGHT,
 }
 
-impl Side {
-    pub fn to_value(&self) -> &str {
-        match self {
-            Side::LEFT => "left",
-            Side::RIGHT => "right",
-        }
-    }
-}
-
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
 pub enum Slot {
     SLOT1 = 1,
     SLOT2 = 2,
@@ -72,50 +54,72 @@ pub enum Slot {
     SLOT16 = 16,
 }
 
-impl Slot {
-    pub fn to_value(&self) -> Value {
-        json!(*self as u8)
-    }
-
-    pub fn from_u8(n: u8) -> Self {
-        match n {
-            1 => Slot::SLOT1,
-            2 => Slot::SLOT2,
-            3 => Slot::SLOT3,
-            4 => Slot::SLOT4,
-            5 => Slot::SLOT5,
-            6 => Slot::SLOT6,
-            7 => Slot::SLOT7,
-            8 => Slot::SLOT8,
-            9 => Slot::SLOT9,
-            10 => Slot::SLOT10,
-            11 => Slot::SLOT11,
-            12 => Slot::SLOT12,
-            13 => Slot::SLOT13,
-            14 => Slot::SLOT14,
-            15 => Slot::SLOT15,
-            16 => Slot::SLOT16,
-            _ => Slot::SLOT1,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FuelLevel {
     Amount(u32),
     Unlimited,
 }
 
-impl FuelLevel {
-    pub fn from_value(v: &Value) -> Self {
-        if let Some(n) = v.as_u64() {
-            FuelLevel::Amount(n as u32)
-        } else if v.as_str() == Some("unlimited") {
-            FuelLevel::Unlimited
-        } else {
-            FuelLevel::Amount(0)
-        }
-    }
+/// Enum for determining tasks on a turtle
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "action", content = "args")]
+pub enum TurtleAction {
+    // Movement
+    Forward,
+    Back,
+    Up,
+    Down,
+    TurnLeft,
+    TurnRight,
+
+    // World interactions
+    Dig{side: Option<Side>},
+    DigUp{side: Option<Side>},
+    DigDown{side: Option<Side>},
+    Place{text: Option<String>},
+    PlaceUp{text: Option<String>},
+    PlaceDown{text: Option<String>},
+    Attack{side: Option<Side>},
+    AttackUp{side: Option<Side>},
+    AttackDown{side: Option<Side>},
+
+    // Inventory
+    Select{slot: Slot},
+    Drop{count: Option<u8>},
+    DropUp{count: Option<u8>},
+    DropDown{count: Option<u8>},
+    Suck{count: Option<u8>},
+    SuckUp{count: Option<u8>},
+    SuckDown{count: Option<u8>},
+    TransferTo{slot: Slot, count: Option<u8>},
+
+    // Fuel & tools
+    Refuel{count: Option<u8>},
+    EquipLeft,
+    EquipRight,
+
+    // Misc
+    Craft{limit: Option<u8>},
+    StartGpsHost,
+    StopGpsHost,
+    UpdateLocation{x: i64, y: i64, z: i64, direction: Direction}
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TurtleResponse {
+    pub success: bool, // if the command failed
+    pub reason: Option<String>, // Why the command failed
+    pub last_action: u64, // This is the last action performed in the array
+    pub data: Option<Value>, // Used to send back complex data
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum TurtlePayload {
+    Procedure{ id: u64, data: Vec<TurtleAction> },
+    Oneshot{ id: u64, data: Vec<TurtleAction> },
+    Query{ id: u64, data: Value },
+    Response{ id: u64, data: TurtleResponse }
 }
 
 /// Error handling enum

@@ -13,7 +13,6 @@ use crate::turtle::{SmartTurtle, Turtle, VirtualTurtle};
 
 mod pathfinding;
 mod managers;
-mod payload;
 mod gateway;
 mod turtle;
 mod client;

@@ -22,16 +22,16 @@ pub trait VirtualTurtle {
     async fn detect(&self) -> Result<bool, TurtleError>;
     async fn detect_up(&self) -> Result<bool, TurtleError>;
     async fn detect_down(&self) -> Result<bool, TurtleError>;
-    async fn inspect(&self) -> Result<Value, TurtleError>;
-    async fn inspect_up(&self) -> Result<Value, TurtleError>;
-    async fn inspect_down(&self) -> Result<Value, TurtleError>;
+    async fn inspect(&self) -> Result<Option<Value>, TurtleError>;
+    async fn inspect_up(&self) -> Result<Option<Value>, TurtleError>;
+    async fn inspect_down(&self) -> Result<Option<Value>, TurtleError>;
 
     // Inventory Management
-    async fn select(&mut self, slot: Slot);
-    async fn get_selected_slot(&self) -> Slot;
-    async fn get_item_count(&self, slot: Option<Slot>) -> u8;
-    async fn get_item_space(&self, slot: Option<Slot>) -> u8;
-    async fn get_item_detail(&self, slot: Option<Slot>, detailed: Option<bool>) -> Result<Option<serde_json::Value>, TurtleError>;
+    async fn select(&mut self, slot: Slot) -> Result<(), TurtleError>;
+    async fn get_selected_slot(&self) -> Result<Slot, TurtleError>;
+    async fn get_item_count(&self, slot: Option<Slot>) -> Result<u8, TurtleError>;
+    async fn get_item_space(&self, slot: Option<Slot>) -> Result<u8, TurtleError>;
+    async fn get_item_detail(&self, slot: Option<Slot>, detailed: Option<bool>) -> Result<Option<Value>, TurtleError>;
     async fn drop(&mut self, count: Option<u8>) -> Result<(), TurtleError>;
     async fn drop_up(&mut self, count: Option<u8>) -> Result<(), TurtleError>;
     async fn drop_down(&mut self, count: Option<u8>) -> Result<(), TurtleError>;
@@ -39,10 +39,10 @@ pub trait VirtualTurtle {
     async fn suck_up(&mut self, count: Option<u8>) -> Result<(), TurtleError>;
     async fn suck_down(&mut self, count: Option<u8>) -> Result<(), TurtleError>;
     async fn transfer_to(&mut self, slot: Slot, count: Option<u8>) -> Result<(), TurtleError>;
-    async fn compare(&self) -> bool;
-    async fn compare_up(&self) -> bool;
-    async fn compare_down(&self) -> bool;
-    async fn compare_to(&self, slot: Slot) -> bool;
+    async fn compare(&self) -> Result<bool, TurtleError>;
+    async fn compare_up(&self) -> Result<bool, TurtleError>;
+    async fn compare_down(&self) -> Result<bool, TurtleError>;
+    async fn compare_to(&self, slot: Slot) -> Result<bool, TurtleError>;
 
     // Fuel & Upgrades
     async fn get_fuel_level(&self) -> FuelLevel;

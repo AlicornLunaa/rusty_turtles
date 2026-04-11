@@ -4,185 +4,124 @@
 local turtle_req_id = 0
 
 local action_table = {
-    ["forward"] = function(args)
+    -- Movement
+    ["Forward"] = function(args)
         local success, err = turtle.forward()
-        return { success = success, error = err }
+        return { success = success, reason = err }
     end,
-    ["back"] = function(args)
+    ["Back"] = function(args)
         local success, err = turtle.back()
-        return { success = success, error = err }
+        return { success = success, reason = err }
     end,
-    ["up"] = function(args)
+    ["Up"] = function(args)
         local success, err = turtle.up()
-        return { success = success, error = err }
+        return { success = success, reason = err }
     end,
-    ["down"] = function(args)
+    ["Down"] = function(args)
         local success, err = turtle.down()
-        return { success = success, error = err }
+        return { success = success, reason = err }
     end,
-    ["turnLeft"] = function(args)
+    ["TurnLeft"] = function(args)
         local success, err = turtle.turnLeft()
-        return { success = success, error = err }
+        return { success = success, reason = err }
     end,
-    ["turnRight"] = function(args)
+    ["TurnRight"] = function(args)
         local success, err = turtle.turnRight()
-        return { success = success, error = err }
+        return { success = success, reason = err }
     end,
 
-    ["dig"] = function(args)
-        local success, err = turtle.dig(args[1])
-        return { success = success, error = err }
+    -- World interactions
+    ["Dig"] = function(args)
+        local success, err = turtle.dig(args["side"])
+        return { success = success, reason = err }
     end,
-    ["digUp"] = function(args)
-        local success, err = turtle.digUp(args[1])
-        return { success = success, error = err }
+    ["DigUp"] = function(args)
+        local success, err = turtle.digUp(args["side"])
+        return { success = success, reason = err }
     end,
-    ["digDown"] = function(args)
-        local success, err = turtle.digDown(args[1])
-        return { success = success, error = err }
+    ["DigDown"] = function(args)
+        local success, err = turtle.digDown(args["side"])
+        return { success = success, reason = err }
     end,
-
-    ["place"] = function(args)
-        local success, err = turtle.place(args[1])
-        return { success = success, error = err }
+    ["Place"] = function(args)
+        local success, err = turtle.place(args["text"])
+        return { success = success, reason = err }
     end,
-    ["placeUp"] = function(args)
-        local success, err = turtle.placeUp(args[1])
-        return { success = success, error = err }
+    ["PlaceUp"] = function(args)
+        local success, err = turtle.placeUp(args["text"])
+        return { success = success, reason = err }
     end,
-    ["placeDown"] = function(args)
-        local success, err = turtle.placeDown(args[1])
-        return { success = success, error = err }
+    ["PlaceDown"] = function(args)
+        local success, err = turtle.placeDown(args["text"])
+        return { success = success, reason = err }
     end,
-
-    ["detect"] = function(args)
-        return { success = turtle.detect() }
+    ["Attack"] = function(args)
+        local success, err = turtle.attack(args["side"])
+        return { success = success, reason = err }
     end,
-    ["detectUp"] = function(args)
-        return { success = turtle.detectUp() }
+    ["AttackUp"] = function(args)
+        local success, err = turtle.attackUp(args["side"])
+        return { success = success, reason = err }
     end,
-    ["detectDown"] = function(args)
-        return { success = turtle.detectDown() }
-    end,
-
-    ["inspect"] = function(args)
-        local success, data = turtle.inspect()
-        return { success = success, data = data }
-    end,
-    ["inspectUp"] = function(args)
-        local success, data = turtle.inspectUp()
-        return { success = success, data = data }
-    end,
-    ["inspectDown"] = function(args)
-        local success, data = turtle.inspectDown()
-        return { success = success, data = data }
+    ["AttackDown"] = function(args)
+        local success, err = turtle.attackDown(args["side"])
+        return { success = success, reason = err }
     end,
 
-    ["select"] = function(args)
-        return { success = turtle.select(args[1]) }
+    -- Inventory
+    ["Select"] = function(args)
+        return { success = turtle.select(args["slot"]) }
     end,
-    ["getSelectedSlot"] = function(args)
-        return { slot = turtle.getSelectedSlot() }
+    ["Drop"] = function(args)
+        local success, err = turtle.drop(args["count"])
+        return { success = success, reason = err }
     end,
-    ["getItemCount"] = function(args)
-        return { count = turtle.getItemCount(args[1]) }
+    ["DropUp"] = function(args)
+        local success, err = turtle.dropUp(args["count"])
+        return { success = success, reason = err }
     end,
-    ["getItemSpace"] = function(args)
-        return { space = turtle.getItemSpace(args[1]) }
+    ["DropDown"] = function(args)
+        local success, err = turtle.dropDown(args["count"])
+        return { success = success, reason = err }
     end,
-    ["getItemDetail"] = function(args)
-        return { detail = turtle.getItemDetail(args[1], args[2]) }
+    ["Suck"] = function(args)
+        local success, err = turtle.suck(args["count"])
+        return { success = success, reason = err }
     end,
-
-    ["drop"] = function(args)
-        local success, err = turtle.drop(args[1])
-        return { success = success, error = err }
+    ["SuckUp"] = function(args)
+        local success, err = turtle.suckUp(args["count"])
+        return { success = success, reason = err }
     end,
-    ["dropUp"] = function(args)
-        local success, err = turtle.dropUp(args[1])
-        return { success = success, error = err }
+    ["SuckDown"] = function(args)
+        local success, err = turtle.suckDown(args["count"])
+        return { success = success, reason = err }
     end,
-    ["dropDown"] = function(args)
-        local success, err = turtle.dropDown(args[1])
-        return { success = success, error = err }
-    end,
-
-    ["suck"] = function(args)
-        local success, err = turtle.suck(args[1])
-        return { success = success, error = err }
-    end,
-    ["suckUp"] = function(args)
-        local success, err = turtle.suckUp(args[1])
-        return { success = success, error = err }
-    end,
-    ["suckDown"] = function(args)
-        local success, err = turtle.suckDown(args[1])
-        return { success = success, error = err }
+    ["TransferTo"] = function(args)
+        return { success = turtle.transferTo(args["slot"], args["count"]) }
     end,
 
-    ["transferTo"] = function(args)
-        return { success = turtle.transferTo(args[1], args[2]) }
+    -- Fuel & slots
+    ["Refuel"] = function(args)
+        local success, err = turtle.refuel(args["count"])
+        return { success = success, reason = err }
     end,
-
-    ["compare"] = function(args)
-        return { data = turtle.compare() }
-    end,
-    ["compareUp"] = function(args)
-        return { data = turtle.compareUp() }
-    end,
-    ["compareDown"] = function(args)
-        return { data = turtle.compareDown() }
-    end,
-    ["compareTo"] = function(args)
-        return { data = turtle.compareTo(args[1]) }
-    end,
-
-    ["getFuelLevel"] = function(args)
-        return { level = turtle.getFuelLevel() }
-    end,
-    ["getFuelLimit"] = function(args)
-        return { limit = turtle.getFuelLimit() }
-    end,
-    ["refuel"] = function(args)
-        local success, err = turtle.refuel(args[1])
-        return { success = success, error = err }
-    end,
-
-    ["equipLeft"] = function(args)
+    ["EquipLeft"] = function(args)
         local success, err = turtle.equipLeft()
-        return { success = success, error = err }
+        return { success = success, reason = err }
     end,
-    ["equipRight"] = function(args)
+    ["EquipRight"] = function(args)
         local success, err = turtle.equipRight()
-        return { success = success, error = err }
-    end,
-    ["getEquippedLeft"] = function(args)
-        return { detail = turtle.getEquippedLeft() }
-    end,
-    ["getEquippedRight"] = function(args)
-        return { detail = turtle.getEquippedRight() }
+        return { success = success, reason = err }
     end,
 
-    ["craft"] = function(args)
-        local success, err = turtle.craft(args[1])
-        return { success = success, error = err }
+    -- Misc
+    ["Craft"] = function(args)
+        local success, err = turtle.craft(args["limit"])
+        return { success = success, reason = err }
     end,
 
-    ["attack"] = function(args)
-        local success, err = turtle.attack(args[1])
-        return { success = success, error = err }
-    end,
-    ["attackUp"] = function(args)
-        local success, err = turtle.attackUp(args[1])
-        return { success = success, error = err }
-    end,
-    ["attackDown"] = function(args)
-        local success, err = turtle.attackDown(args[1])
-        return { success = success, error = err }
-    end,
-
-    -- Custom directives
-    ["start_gps_host"] = function(args, socket, server_req_id)
+    -- Custom
+    ["StartGpsHost"] = function(args, socket, server_req_id)
         -- This starts a blocking job to host GPS
         local success = true
 
@@ -224,7 +163,7 @@ local action_table = {
                                 res_id = request["req_id"],
                                 data = {
                                     success = false,
-                                    error = "GPS is currently running, cannot do anything else."
+                                    reason = "GPS is currently running, cannot do anything else."
                                 }
                             }))
                         end
@@ -237,11 +176,11 @@ local action_table = {
         print("GPS host successful: " .. tostring(success))
         return nil
     end,
-    ["stop_gps_host"] = function(args)
-        return { success = false, error = "No GPS running." }
+    ["StopGpsHost"] = function(args)
+        return { success = false, reason = "No GPS running." }
     end,
-    ["update_location"] = function(args)
-        local location_data = { x = args[1], y = args[2], z = args[3], direction = args[4] }
+    ["UpdateLocation"] = function(args)
+        local location_data = { x = args["x"], y = args["y"], z = args["z"], direction = args["direction"] }
 
         local file, err = fs.open("location.json", "w")
 
@@ -250,19 +189,83 @@ local action_table = {
             file.close()
         end
 
-        return { success = file ~= nil, error = err }
+        return { success = file ~= nil, reason = err }
     end,
-    ["turtle_init"] = function(args, socket)
+}
+
+local query_table = {
+    -- World
+    ["Detect"] = function(args)
+        return { success = turtle.detect(), last_action = 0 }
+    end,
+    ["DetectUp"] = function(args)
+        return { success = turtle.detectUp(), last_action = 0 }
+    end,
+    ["DetectDown"] = function(args)
+        return { success = turtle.detectDown(), last_action = 0 }
+    end,
+    ["Inspect"] = function(args)
+        local success, data = turtle.inspect()
+        return { success = success, data = data, last_action = 0 }
+    end,
+    ["InspectUp"] = function(args)
+        local success, data = turtle.inspectUp()
+        return { success = success, data = data, last_action = 0 }
+    end,
+    ["InspectDown"] = function(args)
+        local success, data = turtle.inspectDown()
+        return { success = success, data = data, last_action = 0 }
+    end,
+
+    -- Inventory
+    ["GetSelectedSlot"] = function(args)
+        return { success = true, last_action = 0, data = turtle.getSelectedSlot() }
+    end,
+    ["GetItemCount"] = function(args)
+        return { success = true, last_action = 0, data = turtle.getItemCount(args[1]) }
+    end,
+    ["GetItemSpace"] = function(args)
+        return { success = true, last_action = 0, data = turtle.getItemSpace(args[1]) }
+    end,
+    ["GetItemDetail"] = function(args)
+        return { success = true, last_action = 0, data = turtle.getItemDetail(args[1], args[2]) }
+    end,
+    ["Compare"] = function(args)
+        return { success = true, last_action = 0, data = turtle.compare() }
+    end,
+    ["CompareUp"] = function(args)
+        return { success = true, last_action = 0, data = turtle.compareUp() }
+    end,
+    ["CompareDown"] = function(args)
+        return { success = true, last_action = 0, data = turtle.compareDown() }
+    end,
+    ["CompareTo"] = function(args)
+        return { success = true, last_action = 0, data = turtle.compareTo(args[1]) }
+    end,
+
+    -- Fuel & slots
+    ["GetFuelLevel"] = function(args)
+        return { success = true, last_action = 0, data = turtle.getFuelLevel() }
+    end,
+    ["GetFuelLimit"] = function(args)
+        return { success = true, last_action = 0, data = turtle.getFuelLimit() }
+    end,
+    ["GetEquippedLeft"] = function(args)
+        return { success = true, last_action = 0, data = turtle.getEquippedLeft() }
+    end,
+    ["GetEquippedRight"] = function(args)
+        return { success = true, last_action = 0, data = turtle.getEquippedRight() }
+    end,
+
+    -- Custom
+    ["TurtleInit"] = function(args, socket)
         -- Try location with File, then GPS, then manual entry
         local location_data
 
-        socket.send(encapsulate_data({
-            type = "request",
-            oneshot = false,
-            req_id = turtle_req_id + 1,
-            data = {
-                action = "ping",
-            }
+        socket.send(textutils.serializeJSON({
+            type = "Query",
+            id = turtle_req_id + 1,
+            data = { type = "Ping" }
         }))
         turtle_req_id = turtle_req_id + 1
         print(socket.receive())
@@ -289,46 +292,81 @@ local action_table = {
             file.close()
         end
 
-        return location_data
+        return { success = true, last_action = 0, data = { location_data.x, location_data.y, location_data.z, string.upper(location_data.direction)} }
     end
 }
 
-function encapsulate_data(data)
-    return textutils.serializeJSON(data)
-end
-
-function decapsulate_data(data)
-    local json = textutils.unserializeJSON(data)
-    return json
-end
-
 function handle_command(socket, data)
     -- This will parse the command, execute it, and send back the result to the server
-    local request_id = data["req_id"]
-    local oneshot = data["oneshot"] 
-    local command = data["data"]
-    local action = action_table[command.action]
+    local msg_type = data["type"]
+    local req_id = data["id"]
 
-    if action then
-        local result = action(command.args, socket, request_id)
+    if msg_type == "Query" then
+        -- Server is asking the turtle something
+        local command = data["data"]
+        local query = query_table[command["type"]]
 
-        if result and not oneshot then
-            -- This is here so a function can choose whether or not to automatically respond.
-            -- This allows complex directives (gps_host) to takeover all behaviors until its done
-            socket.send(encapsulate_data({
-                type = "response",
-                res_id = request_id,
-                data = result
-            }))
+        if query then
+            local result = query(command, socket, req_id)
+
+            if result then
+                socket.send(textutils.serializeJSON({
+                    type = "Response",
+                    id = req_id,
+                    data = result
+                }))
+            end
         end
-    elseif not oneshot then
-        local err = { success = false, error = "Invalid action" }
-        
-        socket.send(encapsulate_data({
-            type = "response",
-            res_id = request_id,
-            data = err
+    elseif msg_type == "Procedure" then
+        -- Server is telling the turtle to do something and expects a response
+        local command_list = data["data"]
+        local last_reason = nil
+        local count = 0
+
+        for k,command in pairs(command_list) do
+            local action = action_table[command["action"]]
+
+            if action then
+                local result = action(command, socket, req_id)
+
+                if result and not result.success then
+                    last_reason = result.reason
+                    break
+                end
+            else
+                last_reason = "Invalid action."
+                break
+            end
+
+            count = count + 1
+        end
+
+        socket.send(textutils.serializeJSON({
+            type = "Response",
+            id = req_id,
+            data = {
+                success = (last_reason == nil),
+                reason = last_reason,
+                last_action = count
+            }
         }))
+    elseif msg_type == "Oneshot" then
+        -- Server is telling the turtle to do something and doesn't care about what is has to say :(
+        local command_list = data["data"]
+
+        for k,v in pairs(command_list) do
+            local action = action_table[command["action"]]
+
+            if action then
+                local result = action(command, socket, req_id)
+
+                if result and not result.success then
+                    break
+                end
+            else
+                break
+            end
+        end
     end
 end
 
@@ -357,7 +395,7 @@ function main()
             local message, is_binary = ws.receive()
     
             if message then
-                local data = decapsulate_data(message)
+                local data = textutils.unserializeJSON(message)
                 print("Received command: " .. message)
                 handle_command(ws, data)
             else

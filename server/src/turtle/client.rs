@@ -5,7 +5,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::{sync::{Mutex, mpsc, oneshot}, task::JoinHandle};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::{gateway::{ServerAction, ServerMessage}, turtle::{queries::{TurtleInit, TurtleQuery}, types::*}};
+use crate::{gateway::{ServerAction, ServerMessage}, turtle::{TurtleAction, queries::{TurtleInit, TurtleQuery}, types::*}, util::script};
 
 /// A struct representing a turtle
 pub struct Turtle {
@@ -139,9 +139,12 @@ impl Turtle {
     }
 
     async fn initial_handshake(turtle_tx: mpsc::Sender<TurtleMessage>) -> Result<(i64, i64, i64, Direction), String> {
+        // Get a fresh turtle script in case there was an update
+        let (version, _) = script::read_turtle_script();
+
         // Send a message to the turtle's websocket
         let (tx, rx) = oneshot::channel::<TurtleResponse>();
-        let message = TurtleMessage::Query { query: TurtleInit.to_payload(), response: tx };
+        let message = TurtleMessage::Query { query: TurtleInit { version }.to_payload(), response: tx };
 
         if let Err(e) = turtle_tx.send(message).await {
             // Something went wrong with the write stream

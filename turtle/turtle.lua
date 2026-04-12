@@ -1,3 +1,5 @@
+local version = 1
+
 -- This is a simple dumb terminal program for the turtle.
 -- It is intended to be the part of the program which executes commands
 -- given from the digital twin in rust.
@@ -277,7 +279,13 @@ local query_table = {
 
     -- Custom
     ["TurtleInit"] = function(args, socket)
-        -- Try location with File, then GPS, then manual entry
+        -- First get versions from server
+        if args["version"] < version then
+            print("Script is out of date!")
+            sleep(4)
+        end
+
+        -- Try location with GPS, then see if a saved state exists, then ask server to host GPS, all else fails then manual entry
         local location_data
 
         print(query_server(socket, { type = "Ping" }))

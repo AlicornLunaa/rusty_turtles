@@ -1,7 +1,54 @@
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-use crate::{gateway::{ServerAction, ServerMessage}, turtle::{self, SmartTurtle, TurtleAction, client::Turtle, types::{Direction, TurtleError}}, util::vector::Vector3};
+use crate::{gateway::{ServerAction, ServerMessage}, turtle::{self, Side, Slot, SmartTurtle, client::Turtle, types::{Direction, TurtleError}}, util::vector::Vector3};
+
+/// Enum for determining tasks on a turtle
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "action", content = "args")]
+pub enum TurtleAction {
+    // Movement
+    Forward,
+    Back,
+    Up,
+    Down,
+    TurnLeft,
+    TurnRight,
+
+    // World interactions
+    Dig{side: Option<Side>},
+    DigUp{side: Option<Side>},
+    DigDown{side: Option<Side>},
+    Place{text: Option<String>},
+    PlaceUp{text: Option<String>},
+    PlaceDown{text: Option<String>},
+    Attack{side: Option<Side>},
+    AttackUp{side: Option<Side>},
+    AttackDown{side: Option<Side>},
+
+    // Inventory
+    Select{slot: Slot},
+    Drop{count: Option<u8>},
+    DropUp{count: Option<u8>},
+    DropDown{count: Option<u8>},
+    Suck{count: Option<u8>},
+    SuckUp{count: Option<u8>},
+    SuckDown{count: Option<u8>},
+    TransferTo{slot: Slot, count: Option<u8>},
+
+    // Fuel & tools
+    Refuel{count: Option<u8>},
+    EquipLeft,
+    EquipRight,
+
+    // Misc
+    Craft{limit: Option<u8>},
+    Quit,
+    StartGpsHost,
+    StopGpsHost,
+    UpdateLocation{x: i64, y: i64, z: i64, direction: Direction}
+}
 
 /// Smart turtle implementation
 impl Turtle {

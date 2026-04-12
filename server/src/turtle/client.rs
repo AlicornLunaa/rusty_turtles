@@ -3,11 +3,11 @@ use std::{collections::HashMap, sync::Arc};
 use serde_json::Value;
 use futures_util::{SinkExt, StreamExt};
 use tokio::{sync::{Mutex, mpsc, oneshot}, task::JoinHandle};
-use tokio_tungstenite::tungstenite::{Message, http::response};
+use tokio_tungstenite::tungstenite::Message;
 
-use crate::{gateway::{ServerAction, ServerMessage}, turtle::{TurtleInit, TurtleQuery, types::*}};
+use crate::{gateway::{ServerAction, ServerMessage}, turtle::{queries::{TurtleInit, TurtleQuery}, types::*}};
 
-/// A struct representing a turtle, which implements the VirtualTurtle trait.
+/// A struct representing a turtle
 pub struct Turtle {
     id: u64,
     turtle_write_stream: mpsc::Sender<TurtleMessage>,
@@ -180,29 +180,6 @@ impl Turtle {
         })
     }
 
-    // Turtle setters
-    pub(super) async fn move_relative(&mut self, dx: i64, dy: i64, dz: i64) -> Result<(), TurtleError> {
-        // Update by deltas
-        self.x += dx;
-        self.y += dy;
-        self.z += dz;
-
-        // Update turtle with another RPC
-        let result = self.execute(TurtleAction::UpdateLocation { x: self.x, y: self.y, z: self.z, direction: self.direction.clone() }).await?;
-
-        // Error handling
-        if result.success {
-            Ok(())
-        } else {
-            Err(TurtleError::VirtualError(result.reason.unwrap_or("Failure to save state to turtle?".to_string())))
-        }
-    }
-
-    pub(super) async fn rotate_direction(&mut self, direction: Direction) -> Result<(), TurtleError> {
-        self.direction = direction;
-        self.move_relative(0, 0, 0).await
-    }
-
     // Turtle getters
     pub async fn is_valid(&self) -> bool {
         *self.valid.lock().await
@@ -240,6 +217,84 @@ impl Turtle {
     }
 
     // Private helpers for communication with the actual turtle
+    async fn get_state_from_actions(&mut self, actions: &Vec<TurtleAction>, last_action: usize) -> Result<(), TurtleError> {
+        // Builds the positions iteratively to the last action
+        let (mut x, mut y, mut z) = self.get_position();
+        let mut direction = self.get_direction();
+
+        for i in 0..last_action {
+            let current_action = actions.get(i).unwrap();
+
+            match current_action {
+                TurtleAction::Forward => {
+                    match direction {
+                        Direction::NORTH => z -= 1,
+                        Direction::SOUTH => z += 1,
+                        Direction::EAST => x += 1,
+                        Direction::WEST => x -= 1,
+                    }
+                },
+                TurtleAction::Back => {
+                    match direction {
+                        Direction::NORTH => z += 1,
+                        Direction::SOUTH => z -= 1,
+                        Direction::EAST => x -= 1,
+                        Direction::WEST => x += 1,
+                    }
+                },
+                TurtleAction::Up => {
+                    y += 1;
+                },
+                TurtleAction::Down => {
+                    y -= 1;
+                },
+                TurtleAction::TurnLeft => {
+                    direction = match direction {
+                        Direction::NORTH => Direction::WEST,
+                        Direction::WEST => Direction::SOUTH,
+                        Direction::SOUTH => Direction::EAST,
+                        Direction::EAST => Direction::NORTH,
+                    };
+                },
+                TurtleAction::TurnRight => {
+                    direction = match direction {
+                        Direction::NORTH => Direction::EAST,
+                        Direction::EAST => Direction::SOUTH,
+                        Direction::SOUTH => Direction::WEST,
+                        Direction::WEST => Direction::NORTH,
+                    };
+                },
+                _ => {} // Ignore all actions which are not movement based
+            }
+        }
+
+        // Save the data
+        self.x = x;
+        self.y = y;
+        self.z = z;
+        self.direction = direction.clone();
+
+        // Send data to the turlte as an update
+        let (tx, rx) = oneshot::channel::<TurtleResponse>();
+        let message = TurtleMessage::Action { actions: vec![TurtleAction::UpdateLocation { x, y, z, direction }], return_tx: Some(tx) };
+
+        if let Err(e) = self.turtle_write_stream.send(message).await {
+            // Something went wrong with the write stream
+            *self.valid.lock().await = false;
+            return Err(TurtleError::SocketError(e.to_string()));
+        }
+
+        // Wait for the response
+        match rx.await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                // The send command failed to obtain a result, probably closed
+                *self.valid.lock().await = false;
+                Err(TurtleError::SocketError(e.to_string()))
+            },
+        }
+    }
+
     pub async fn oneshot(&self, action: TurtleAction) -> Result<(), TurtleError> {
         let message = TurtleMessage::Action { actions: vec![action], return_tx: None };
 
@@ -251,14 +306,14 @@ impl Turtle {
         Ok(())
     }
 
-    pub async fn execute(&self, action: TurtleAction) -> Result<TurtleResponse, TurtleError> {
+    pub async fn execute(&mut self, action: TurtleAction) -> Result<TurtleResponse, TurtleError> {
         self.execute_batch(vec![action]).await
     }
 
-    pub async fn execute_batch(&self, actions: Vec<TurtleAction>) -> Result<TurtleResponse, TurtleError> {
+    pub async fn execute_batch(&mut self, actions: Vec<TurtleAction>) -> Result<TurtleResponse, TurtleError> {
         // Send a message to the turtle's websocket
         let (tx, rx) = oneshot::channel::<TurtleResponse>();
-        let message = TurtleMessage::Action { actions: actions, return_tx: Some(tx) };
+        let message = TurtleMessage::Action { actions: Vec::clone(&actions), return_tx: Some(tx) };
 
         if let Err(e) = self.turtle_write_stream.send(message).await {
             // Something went wrong with the write stream
@@ -268,7 +323,11 @@ impl Turtle {
 
         // Wait for the response
         match rx.await {
-            Ok(response) => Ok(response),
+            Ok(response) => {
+                // Update turtle's saved position
+                self.get_state_from_actions(&actions, response.last_action as usize).await?;
+                Ok(response)
+            },
             Err(e) => {
                 // The send command failed to obtain a result, probably closed
                 *self.valid.lock().await = false;
@@ -307,8 +366,8 @@ impl Drop for Turtle {
 }
 
 /// Simple helper to build action lists for a turtle
-struct TurtleSequence<'a> {
-    turtle: &'a Turtle,
+pub struct TurtleSequence<'a> {
+    turtle: &'a mut Turtle,
     queue: Vec<TurtleAction>,
 }
 

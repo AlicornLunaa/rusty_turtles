@@ -12,3 +12,4 @@ luac.out
 .env
 .craftos
 *.db
+.vscode/

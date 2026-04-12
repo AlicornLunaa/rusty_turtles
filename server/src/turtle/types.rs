@@ -61,7 +61,7 @@ pub enum FuelLevel {
 }
 
 /// Enum for determining tasks on a turtle
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "action", content = "args")]
 pub enum TurtleAction {
     // Movement

@@ -9,7 +9,7 @@ use crate::gateway::Gateway;
 use crate::managers::block_manager::BlockManager;
 use crate::managers::object_relations;
 use crate::managers::turtle_manager::TurtleManager;
-use crate::turtle::{SmartTurtle, Turtle, VirtualTurtle};
+use crate::turtle::{SmartTurtle, Turtle};
 
 mod pathfinding;
 mod managers;

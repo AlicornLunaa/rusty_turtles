@@ -10,4 +10,3 @@ pub use actions::*;
 pub use client::*;
 pub use traits::*;
 pub use types::*;
-pub use queries::*;

@@ -1,55 +1,85 @@
+use std::sync::Arc;
+
 /// This module is responsible for managing blocks in the world, including updating block states and notifying visualizers of changes.
 use crate::managers::object_relations::ORM;
+use dashmap::DashMap;
 use shared::blocks::{Block, BlockNotification};
-use tokio::sync;
+use tokio::sync::{self, broadcast, mpsc};
 
-/// High speed in-memory cache
 
+#[derive(Hash, Eq, PartialEq, Clone, Copy)]
+pub struct Coord { x: i64, y: i64, z: i64 }
+
+/// Interactions
+pub enum BlockManagerCommand {
+    UpdateBlock { x: i64, y: i64, z: i64, block_type: String },
+    RemoveBlock { x: i64, y: i64, z: i64 }
+}
 
 /// Common interactor for outside module
+#[derive(Clone)]
 pub struct BlockManager {
-    database: ORM,
-    notifications_tx: sync::broadcast::Sender<BlockNotification>,
-    notifications_rx: sync::broadcast::Receiver<BlockNotification>
+    grid: Arc<DashMap<Coord, String>>,
+    database_tx: mpsc::Sender<BlockManagerCommand>,
+    notification_tx: sync::broadcast::Sender<BlockNotification>,
 }
 
 impl BlockManager {
-    pub async fn new() -> Self {
-        let (tx, rx) = sync::broadcast::channel::<BlockNotification>(2048);
+    pub fn new() -> Self {
+        let grid = Arc::new(DashMap::new());
+        let (database_tx, mut database_rx) = mpsc::channel(1000);
+        let (notification_tx, _) = broadcast::channel(100);
+
+        tokio::spawn(async move {
+            let db_connection = ORM::new().await;
+            
+            while let Some(cmd) = database_rx.recv().await {
+                match cmd {
+                    BlockManagerCommand::UpdateBlock { x, y, z, block_type } => {
+                        // Await the slow database insert here
+                        db_connection.upsert_block(Block { x, y, z, block_type }).await.unwrap();
+                    }
+                    BlockManagerCommand::RemoveBlock { x, y, z } => {
+                        db_connection.remove_block(x, y, z).await.unwrap();
+                    }
+                }
+            }
+        });
 
         BlockManager {
-            database: ORM::new().await,
-            notifications_tx: tx,
-            notifications_rx: rx
+            grid,
+            database_tx,
+            notification_tx,
         }
     }
 
     pub fn subscribe(&self) -> sync::broadcast::Receiver<BlockNotification> {
-        self.notifications_tx.subscribe()
+        self.notification_tx.subscribe()
     }
 
-    pub async fn update_block(&mut self, x: i64, y: i64, z: i64, block_type: String) -> Result<(), String> {
-        let block = Block {
-            x,
-            y,
-            z,
-            block_type,
-        };
+    pub async fn update_block(&self, x: i64, y: i64, z: i64, block_type: String) {
+        self.grid.insert(Coord { x, y, z }, block_type.clone());
 
-        self.notifications_tx.send(BlockNotification::Update(block.clone())).unwrap();
-        self.database.upsert_block(block).await.map_err(|e| e.to_string())
+        let _ = self.notification_tx.send(BlockNotification::Update(Block { x, y, z, block_type: block_type.clone() }));
+        let _ = self.database_tx.send(BlockManagerCommand::UpdateBlock { x, y, z, block_type }).await;
     }
 
-    pub async fn get_block(&self, x: i64, y: i64, z: i64) -> Option<Block> {
-        self.database.get_block(x, y, z).await
+    pub async fn remove_block(&self, x: i64, y: i64, z: i64) {
+        self.grid.remove(&Coord { x, y, z });
+
+        let _ = self.notification_tx.send(BlockNotification::Remove(x, y, z ));
+        let _ = self.database_tx.send(BlockManagerCommand::RemoveBlock { x, y, z }).await;
     }
 
-    pub async fn remove_block(&mut self, x: i64, y: i64, z: i64) -> Result<(), String> {
-        self.notifications_tx.send(BlockNotification::Remove(x, y, z)).unwrap();
-        self.database.remove_block(x, y, z).await.map_err(|e| e.to_string())
+    pub fn get_block(&self, x: i64, y: i64, z: i64) -> Option<String> {
+        self.grid.get(&Coord { x, y, z }).map(|entry| entry.value().clone())
     }
 
-    pub async fn get_all_blocks(&self) -> Vec<Block> {
-        self.database.get_all_blocks().await.unwrap()
+    pub fn iter_blocks(&self) -> Vec<Block> {
+        self.grid.iter().map(|entry| {
+            let coord = entry.key();
+            let block_type = entry.value().clone();
+            Block { x: coord.x, y: coord.y, z: coord.z, block_type }
+        }).collect()
     }
 }

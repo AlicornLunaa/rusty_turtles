@@ -13,3 +13,4 @@ futures-util = "0.3.32"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_repr = "0.1.20"
 tokio-rusqlite = { version = "0.7.0", features = ["bundled"] }
+dashmap = "6.1.0"

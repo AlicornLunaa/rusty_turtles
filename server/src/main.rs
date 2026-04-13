@@ -36,7 +36,7 @@ async fn create_socket_server() -> TcpListener {
 async fn main() {
     // Initialize the database and the WebSocket server
     let turtle_manager = TurtleManager::new();
-    let block_manager = Arc::new(Mutex::new(BlockManager::new().await));
+    let block_manager = BlockManager::new();
     let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone());
 
     let listener = create_socket_server().await;
@@ -44,7 +44,6 @@ async fn main() {
     // Testing loop
     tokio::spawn({
         let mut turtle_manager = turtle_manager.clone();
-        let block_manager = Arc::clone(&block_manager);
         
         async move {
             // Spawn a thread which every 10 seconds spawns a thread to communicate with turtles

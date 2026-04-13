@@ -1,10 +1,8 @@
-use std::sync::Arc;
-
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::{sync::{Mutex, mpsc, oneshot}, task::JoinHandle};
+use tokio::{sync::{mpsc, oneshot}, task::JoinHandle};
 
-use crate::{managers::{block_manager::BlockManager, turtle_manager::{self, TurtleManager}}, pathfinding, util::vector::Vector3};
+use crate::{managers::{block_manager::BlockManager, turtle_manager::TurtleManager}, util::vector::Vector3};
 use crate::pathfinding::pathfinding::find_path;
 
 /// This module contains the server controller for incoming requests
@@ -27,7 +25,7 @@ pub struct Gateway {
     join_handle: JoinHandle<()>,
     sender: mpsc::Sender<ServerMessage>, // Used for cloning
     turtle_manager: TurtleManager,
-    block_manager: Arc<Mutex<BlockManager>>,
+    block_manager: BlockManager,
 }
 
 impl Gateway {
@@ -40,14 +38,14 @@ impl Gateway {
         // for another turtle to locate itself for bootstrapping
     }
 
-    pub fn new(turtle_manager: TurtleManager, block_manager: Arc<Mutex<BlockManager>>) -> Self {
+    pub fn new(turtle_manager: TurtleManager, block_manager: BlockManager) -> Self {
         // Start a MPSC channel to handle incoming requests
         let (tx, mut rx) = mpsc::channel::<ServerMessage>(32);
 
         // Spawn gateway thread to handle incoming requests
         let join_handle = tokio::spawn({
             let turtle_manager = turtle_manager.clone();
-            let block_manager = Arc::clone(&block_manager);
+            let block_manager = block_manager.clone();
 
             async move {
                 println!("Starting gateway thread");
@@ -61,9 +59,9 @@ impl Gateway {
                                 },
                                 ServerAction::UpdateBlock(x, y, z, block) => {
                                     if block != "minecraft:air" {
-                                        block_manager.lock().await.update_block(x, y, z, block).await.unwrap();
+                                        block_manager.update_block(x, y, z, block).await;
                                     } else {
-                                        block_manager.lock().await.remove_block(x, y, z).await.unwrap();
+                                        block_manager.remove_block(x, y, z).await;
                                     }
                                 },
                                 _ => {
@@ -78,8 +76,7 @@ impl Gateway {
                                     let _ = tx.send(Ok(json!({ "success": true })));
                                 },
                                 ServerAction::PathTo(x1, y1, z1, x2, y2, z2) => {
-                                    let block_manager = block_manager.lock().await;
-                                    let res = find_path(&*block_manager, Vector3::new(x1, y1, z1), Vector3::new(x2, y2, z2)).await;
+                                    let res = find_path(&block_manager, Vector3::new(x1, y1, z1), Vector3::new(x2, y2, z2)).await;
                                     let _ = tx.send(Ok(json!({ "success": res.is_some(), "path": res.unwrap_or(Vec::new()) })));
                                 },
                                 _ => {

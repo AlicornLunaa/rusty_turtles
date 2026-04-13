@@ -81,7 +81,7 @@ pub mod pathfinding {
 
             for neighbor in neighbors {
                 // Treat existing blocks as solid/impassable terrain
-                if blocks.get_block(neighbor.x, neighbor.y, neighbor.z).await.is_some() {
+                if blocks.get_block(neighbor.x, neighbor.y, neighbor.z).is_some() {
                     continue;
                 }
 

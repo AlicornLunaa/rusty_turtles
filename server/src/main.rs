@@ -35,15 +35,15 @@ async fn create_socket_server() -> TcpListener {
 #[tokio::main]
 async fn main() {
     // Initialize the database and the WebSocket server
+    let turtle_manager = TurtleManager::new();
     let block_manager = Arc::new(Mutex::new(BlockManager::new().await));
-    let turtle_manager = Arc::new(Mutex::new(TurtleManager::new()));
     let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone());
 
     let listener = create_socket_server().await;
 
     // Testing loop
     tokio::spawn({
-        let turtle_manager = Arc::clone(&turtle_manager);
+        let mut turtle_manager = turtle_manager.clone();
         let block_manager = Arc::clone(&block_manager);
         
         async move {
@@ -52,39 +52,43 @@ async fn main() {
                 let turtles_to_remove = Arc::new(Mutex::new(HashSet::new()));
                 let mut handles = Vec::new();
 
-                for (id, turtle) in turtle_manager.lock().await.iter_turtles_mut() {
-                    if !turtle.lock().await.is_valid().await {
-                        turtles_to_remove.lock().await.insert(*id);
-                        continue;
+                for turtle in turtle_manager.iter_turtles().await {
+                    // Make sure the turtle is valid
+                    {
+                        let turtle_lock = turtle.lock().await;
+
+                        if !turtle_lock.is_valid().await {
+                            turtles_to_remove.lock().await.insert(turtle_lock.get_id());
+                            continue;
+                        }
                     }
 
-                    let turtle = Arc::clone(turtle);
-                    let turtle_id = *id;
+                    // Start a future action
                     let turtles_to_remove_inner = Arc::clone(&turtles_to_remove);
                     
                     let action = async move {
-                        let mut turtle_lock = turtle.lock().await;
+                        let mut turtle = turtle.lock().await;
 
                         println!("Starting pathing");
-                        turtle_lock.path_to(4, 56, 12, true).await.unwrap();
-                        turtle_lock.path_to(-7, 58, 14, false).await.unwrap();
-                        // turtle_lock.move_to(2, 0, 0).await.unwrap();
-                        // turtle_lock.move_to(-2, 0, 0).await.unwrap();
-                        // turtle_lock.move_to(0, 0, 2).await.unwrap();
-                        // turtle_lock.move_to(0, 0, -2).await.unwrap();
-                        // turtle_lock.move_to(-2, 0, 0).await.unwrap();
-                        // turtle_lock.move_to(2, 0, 0).await.unwrap();
-                        // turtle_lock.move_to(0, 0, -2).await.unwrap();
-                        // turtle_lock.move_to(0, 0, 2).await.unwrap();
-                        // turtle_lock.move_to(0, 2, 0).await.unwrap();
-                        // turtle_lock.move_to(0, -2, 0).await.unwrap();
+                        turtle.path_to(4, 56, 12, true).await.unwrap();
+                        turtle.path_to(-7, 58, 14, false).await.unwrap();
+                        // turtle.move_to(2, 0, 0).await.unwrap();
+                        // turtle.move_to(-2, 0, 0).await.unwrap();
+                        // turtle.move_to(0, 0, 2).await.unwrap();
+                        // turtle.move_to(0, 0, -2).await.unwrap();
+                        // turtle.move_to(-2, 0, 0).await.unwrap();
+                        // turtle.move_to(2, 0, 0).await.unwrap();
+                        // turtle.move_to(0, 0, -2).await.unwrap();
+                        // turtle.move_to(0, 0, 2).await.unwrap();
+                        // turtle.move_to(0, 2, 0).await.unwrap();
+                        // turtle.move_to(0, -2, 0).await.unwrap();
 
-                        // turtle_lock.move_to(2, 2, 2).await.unwrap();
-                        // turtle_lock.move_to(-4, -2, -4).await.unwrap();
-                        // turtle_lock.move_to(2, 0, 2).await.unwrap();
+                        // turtle.move_to(2, 2, 2).await.unwrap();
+                        // turtle.move_to(-4, -2, -4).await.unwrap();
+                        // turtle.move_to(2, 0, 2).await.unwrap();
 
-                        if !turtle_lock.is_valid().await {
-                            turtles_to_remove_inner.lock().await.insert(turtle_id);
+                        if !turtle.is_valid().await {
+                            turtles_to_remove_inner.lock().await.insert(turtle.get_id());
                         }
                     };
 
@@ -96,12 +100,11 @@ async fn main() {
 
                 {
                     // Remove turtles marked as invalid
-                    let mut manager = turtle_manager.lock().await;
                     let mut turtles_to_remove = turtles_to_remove.lock().await;
         
                     for i in turtles_to_remove.iter() {
                         println!("Removing turtle {i}");
-                        manager.remove_turtle(*i);
+                        turtle_manager.remove_turtle(*i).await;
                     }
         
                     turtles_to_remove.clear();
@@ -115,7 +118,7 @@ async fn main() {
     // Main loop to accept incoming connections and spawn a new task for each one
     loop {
         let (stream, addr) = listener.accept().await.expect("Failed to accept connection");
-        let turtle_manager = Arc::clone(&turtle_manager);
+        let mut turtle_manager = turtle_manager.clone();
         let server_write_stream = gateway.get_sender();
 
         println!("New client connected from {}, determining type", addr);
@@ -131,10 +134,10 @@ async fn main() {
                         // Simple text answer, either "turtle" or "client" for now.
                         match message.to_text().unwrap().trim().to_lowercase().as_str() {
                             "turtle" => {
-                                let new_turtle_id = turtle_manager.lock().await.get_next_id();
+                                let new_turtle_id = turtle_manager.get_next_id().await;
                                 let turtle = Turtle::new(new_turtle_id, ws_stream, server_write_stream).await.unwrap();
                                 let turtle = Arc::new(Mutex::new(turtle));
-                                turtle_manager.lock().await.add_turtle(turtle);
+                                turtle_manager.add_turtle(turtle).await;
                             },
                             "client" => todo!(),
                             _ => {

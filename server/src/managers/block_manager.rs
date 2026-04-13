@@ -9,21 +9,23 @@ use tokio::sync;
 /// Common interactor for outside module
 pub struct BlockManager {
     database: ORM,
-    notifications: sync::broadcast::Sender<BlockNotification>,
+    notifications_tx: sync::broadcast::Sender<BlockNotification>,
+    notifications_rx: sync::broadcast::Receiver<BlockNotification>
 }
 
 impl BlockManager {
     pub async fn new() -> Self {
-        let (tx, _) = sync::broadcast::channel::<BlockNotification>(2048);
+        let (tx, rx) = sync::broadcast::channel::<BlockNotification>(2048);
 
         BlockManager {
             database: ORM::new().await,
-            notifications: tx
+            notifications_tx: tx,
+            notifications_rx: rx
         }
     }
 
     pub fn subscribe(&self) -> sync::broadcast::Receiver<BlockNotification> {
-        self.notifications.subscribe()
+        self.notifications_tx.subscribe()
     }
 
     pub async fn update_block(&mut self, x: i64, y: i64, z: i64, block_type: String) -> Result<(), String> {
@@ -34,7 +36,7 @@ impl BlockManager {
             block_type,
         };
 
-        self.notifications.send(BlockNotification::Update(block.clone())).unwrap();
+        self.notifications_tx.send(BlockNotification::Update(block.clone())).unwrap();
         self.database.upsert_block(block).await.map_err(|e| e.to_string())
     }
 
@@ -43,7 +45,7 @@ impl BlockManager {
     }
 
     pub async fn remove_block(&mut self, x: i64, y: i64, z: i64) -> Result<(), String> {
-        self.notifications.send(BlockNotification::Remove(x, y, z)).unwrap();
+        self.notifications_tx.send(BlockNotification::Remove(x, y, z)).unwrap();
         self.database.remove_block(x, y, z).await.map_err(|e| e.to_string())
     }
 

@@ -26,7 +26,7 @@ pub enum ServerMessage {
 pub struct Gateway {
     join_handle: JoinHandle<()>,
     sender: mpsc::Sender<ServerMessage>, // Used for cloning
-    turtle_manager: Arc<Mutex<TurtleManager>>,
+    turtle_manager: TurtleManager,
     block_manager: Arc<Mutex<BlockManager>>,
 }
 
@@ -40,13 +40,13 @@ impl Gateway {
         // for another turtle to locate itself for bootstrapping
     }
 
-    pub fn new(turtle_manager: Arc<Mutex<TurtleManager>>, block_manager: Arc<Mutex<BlockManager>>) -> Self {
+    pub fn new(turtle_manager: TurtleManager, block_manager: Arc<Mutex<BlockManager>>) -> Self {
         // Start a MPSC channel to handle incoming requests
         let (tx, mut rx) = mpsc::channel::<ServerMessage>(32);
 
         // Spawn gateway thread to handle incoming requests
         let join_handle = tokio::spawn({
-            let turtle_manager = Arc::clone(&turtle_manager);
+            let turtle_manager = turtle_manager.clone();
             let block_manager = Arc::clone(&block_manager);
 
             async move {

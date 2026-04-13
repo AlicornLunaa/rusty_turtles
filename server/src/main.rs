@@ -7,7 +7,6 @@ use tokio::sync::Mutex;
 
 use crate::gateway::Gateway;
 use crate::managers::block_manager::BlockManager;
-use crate::managers::object_relations;
 use crate::managers::turtle_manager::TurtleManager;
 use crate::turtle::{SmartTurtle, Turtle};
 
@@ -19,24 +18,6 @@ mod client;
 mod util;
 
 const DEFAULT_PORT: u16 = 8080;
-
-fn create_database() -> object_relations::ORM {
-    // Read the database path from the environment variable, or use in memory if not set
-    let database_url = match env::var("DATABASE_URL") {
-        Ok(val) => {
-            println!("Using database at path: {}", val);
-            Some(val)
-        },
-        Err(_) => {
-            println!("No database path provided, using in-memory database.");
-            None
-        },
-    };
-
-    let database = object_relations::ORM::new(database_url);
-    database.create_tables().expect("Failed to create database tables");
-    database
-}
 
 async fn create_socket_server() -> TcpListener {
     // Read the default port from the environment variable, or use 8080 if not set
@@ -54,8 +35,7 @@ async fn create_socket_server() -> TcpListener {
 #[tokio::main]
 async fn main() {
     // Initialize the database and the WebSocket server
-    let database = Arc::new(Mutex::new(create_database()));
-    let block_manager = Arc::new(Mutex::new(BlockManager::new(Arc::clone(&database))));
+    let block_manager = Arc::new(Mutex::new(BlockManager::new().await));
     let turtle_manager = Arc::new(Mutex::new(TurtleManager::new()));
     let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone());
 

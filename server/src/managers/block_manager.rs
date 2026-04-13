@@ -1,18 +1,29 @@
 /// This module is responsible for managing blocks in the world, including updating block states and notifying visualizers of changes.
-use std::sync::Arc;
-
 use crate::managers::object_relations::ORM;
 use shared::blocks::{Block, BlockNotification};
-use tokio::sync::Mutex;
+use tokio::sync;
 
+/// High speed in-memory cache
+
+
+/// Common interactor for outside module
 pub struct BlockManager {
-    database: Arc<Mutex<ORM>>,
-    notifications: Vec<BlockNotification>,
+    database: ORM,
+    notifications: sync::broadcast::Sender<BlockNotification>,
 }
 
 impl BlockManager {
-    pub fn new(database: Arc<Mutex<ORM>>) -> Self {
-        BlockManager { database, notifications: Vec::new() }
+    pub async fn new() -> Self {
+        let (tx, _) = sync::broadcast::channel::<BlockNotification>(2048);
+
+        BlockManager {
+            database: ORM::new().await,
+            notifications: tx
+        }
+    }
+
+    pub fn subscribe(&self) -> sync::broadcast::Receiver<BlockNotification> {
+        self.notifications.subscribe()
     }
 
     pub async fn update_block(&mut self, x: i64, y: i64, z: i64, block_type: String) -> Result<(), String> {
@@ -23,28 +34,20 @@ impl BlockManager {
             block_type,
         };
 
-        self.notifications.push(BlockNotification::Update(block.clone()));
-        self.database.lock().await.upsert_block(&block).map_err(|e| e.to_string())
+        self.notifications.send(BlockNotification::Update(block.clone())).unwrap();
+        self.database.upsert_block(block).await.map_err(|e| e.to_string())
     }
 
     pub async fn get_block(&self, x: i64, y: i64, z: i64) -> Option<Block> {
-        self.database.lock().await.get_block(x, y, z)
+        self.database.get_block(x, y, z).await
     }
 
     pub async fn remove_block(&mut self, x: i64, y: i64, z: i64) -> Result<(), String> {
-        self.notifications.push(BlockNotification::Remove(x, y, z));
-        self.database.lock().await.remove_block(x, y, z).map_err(|e| e.to_string())
+        self.notifications.send(BlockNotification::Remove(x, y, z)).unwrap();
+        self.database.remove_block(x, y, z).await.map_err(|e| e.to_string())
     }
 
     pub async fn get_all_blocks(&self) -> Vec<Block> {
-        self.database.lock().await.get_all_blocks().unwrap()
-    }
-
-    pub async fn is_notification_pending(&self) -> bool {
-        !self.notifications.is_empty()
-    }
-
-    pub async fn pop_notification(&mut self) -> BlockNotification {
-        self.notifications.remove(0)
+        self.database.get_all_blocks().await.unwrap()
     }
 }

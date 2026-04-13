@@ -36,7 +36,7 @@ async fn create_socket_server() -> TcpListener {
 async fn main() {
     // Initialize the database and the WebSocket server
     let turtle_manager = TurtleManager::new();
-    let block_manager = BlockManager::new();
+    let block_manager = BlockManager::new().await;
     let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone());
 
     let listener = create_socket_server().await;

@@ -6,14 +6,14 @@ use dashmap::DashMap;
 use shared::blocks::{Block, BlockNotification};
 use tokio::sync::{self, broadcast, mpsc};
 
-
 #[derive(Hash, Eq, PartialEq, Clone, Copy)]
 pub struct Coord { x: i64, y: i64, z: i64 }
 
 /// Interactions
 pub enum BlockManagerCommand {
     UpdateBlock { x: i64, y: i64, z: i64, block_type: String },
-    RemoveBlock { x: i64, y: i64, z: i64 }
+    RemoveBlock { x: i64, y: i64, z: i64 },
+    GetAllBlocks { reply: sync::oneshot::Sender<Vec<Block>> }
 }
 
 /// Common interactor for outside module
@@ -25,7 +25,7 @@ pub struct BlockManager {
 }
 
 impl BlockManager {
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         let grid = Arc::new(DashMap::new());
         let (database_tx, mut database_rx) = mpsc::channel(1000);
         let (notification_tx, _) = broadcast::channel(100);
@@ -38,14 +38,35 @@ impl BlockManager {
                     BlockManagerCommand::UpdateBlock { x, y, z, block_type } => {
                         // Await the slow database insert here
                         db_connection.upsert_block(Block { x, y, z, block_type }).await.unwrap();
-                    }
+                    },
                     BlockManagerCommand::RemoveBlock { x, y, z } => {
                         db_connection.remove_block(x, y, z).await.unwrap();
-                    }
+                    },
+                    BlockManagerCommand::GetAllBlocks { reply } => {
+                        let block_list = db_connection.get_all_blocks().await;
+                        reply.send(block_list.unwrap_or(Vec::new())).unwrap();
+                    },
                 }
             }
         });
 
+        // Read the entirety of the database into the grid
+        let (tx, rx) = sync::oneshot::channel();
+        database_tx.send(BlockManagerCommand::GetAllBlocks { reply: tx }).await.unwrap();
+
+        let block_data = match rx.await {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!("Block manager error. {e}\nPersistence probably does not work...");
+                Vec::new()
+            },
+        };
+
+        for block in block_data {
+            grid.insert(Coord { x: block.x, y: block.y, z: block.z }, block.block_type.clone());
+        }
+
+        // Return the completed object
         BlockManager {
             grid,
             database_tx,

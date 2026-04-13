@@ -17,11 +17,11 @@ Each task is just what I call an ActionStack, or a list of actual actions to tak
 
 ## Goals:
 1. [x] Setup server communications, registering/dropping clients
-2. [ ] Setup database memory system
+2. [x] Setup database memory system
 3. [x] Create virtual turtle initializer and destroyer
 4. [x] Create dead-reckoning system for turtles
-5. [ ] Create virtual turtle remote control for testing
-6. [ ] Create pathfinding endpoint for clients to query
+5. [x] Create virtual turtle remote control for testing
+6. [x] Create pathfinding endpoint for clients to query
 7. [ ] Implement multi-turtle pathfinding at the same time
 8. [ ] Implement state machine to handle complex logic
     - Building: Builds some sort of 3d model or schematic
@@ -30,28 +30,6 @@ Each task is just what I call an ActionStack, or a list of actual actions to tak
     - Swarm: Combines strip mining with a reproduction state
     - Idle: does nothing
     - RC: Turtle is being remotely controlled
-
-### Communication payloads
-```json
-{
-    "type": "request",
-    "req_id": 0,
-    "oneshot": false,
-    "data": {
-        "action": "forward",
-        "args": []
-    }
-}
-
-{
-    "type": "response",
-    "res_id": 0,
-    "data": {
-        "success": true,
-        "error": null
-    }
-}
-```
 
 ### Tasks
 - MoveTo(x, y, z)

@@ -38,6 +38,7 @@ impl Drop for ReservedPath {
     }
 }
 
+/// A* stuff
 #[derive(Copy, Clone, Eq, PartialEq)]
 struct Node {
     pos: Vector3,
@@ -69,7 +70,7 @@ impl PathLedger {
     pub fn new(block_manager: BlockManager) -> PathLedger {
         Self {
             ledger: Arc::new(DashMap::new()),
-            block_manager: block_manager
+            block_manager: block_manager,
         }
     }
 
@@ -135,13 +136,10 @@ impl PathLedger {
                     }
                 }
 
-                // 3. Swap collision check (optional but recommended)
-                // If we move from current to neighbor, check if someone is moving from neighbor to current
+                // 3. Swap collision check
                 let swap_coord = Coord::from((current, next_t));
                 if let Some(res_id_at_neighbor_prev) = self.ledger.get(&Coord::from((neighbor, t))) {
                     if *res_id_at_neighbor_prev != turtle_id {
-                        // Someone was at neighbor at t. 
-                        // If they are at current at t+1, it's a swap.
                         if let Some(res_id_at_current_next) = self.ledger.get(&swap_coord) {
                             if *res_id_at_current_next == *res_id_at_neighbor_prev {
                                 continue;
@@ -167,8 +165,6 @@ impl PathLedger {
             path.push(Coord::from(curr));
             curr = prev;
         }
-        // Don't forget the start node if needed, but usually we only want the future steps
-        // path.push(Coord::from(curr)); 
         path.reverse();
 
         if path.is_empty() && from != to {

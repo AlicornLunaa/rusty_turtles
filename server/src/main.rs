@@ -7,10 +7,10 @@ use tokio::sync::Mutex;
 
 use crate::gateway::Gateway;
 use crate::managers::block_manager::BlockManager;
+use crate::managers::path_manager::PathLedger;
 use crate::managers::turtle_manager::TurtleManager;
 use crate::turtle::{SmartTurtle, Turtle};
 
-mod pathfinding;
 mod managers;
 mod gateway;
 mod turtle;
@@ -37,7 +37,8 @@ async fn main() {
     // Initialize the database and the WebSocket server
     let turtle_manager = TurtleManager::new();
     let block_manager = BlockManager::new().await;
-    let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone());
+    let path_ledger = PathLedger::new(block_manager.clone());
+    let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone(), path_ledger.clone());
 
     let listener = create_socket_server().await;
 

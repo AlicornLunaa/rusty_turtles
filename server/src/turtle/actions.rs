@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-use crate::{gateway::{ServerAction, ServerMessage}, turtle::{self, Side, Slot, SmartTurtle, client::Turtle, types::{Direction, TurtleError}}, util::vector::Vector3};
+use crate::{gateway::{ServerAction, ServerMessage}, managers::path_manager::{Coord, ReservedPath}, turtle::{self, Side, Slot, SmartTurtle, client::Turtle, types::{Direction, TurtleError}}, util::vector::Vector3};
 
 /// Enum for determining tasks on a turtle
 #[derive(Serialize, Deserialize, Clone)]
@@ -188,32 +188,26 @@ impl SmartTurtle for Turtle {
         loop {
             // Ask server for path
             let (src_x, src_y, src_z) = self.get_position();
-            let (tx, rx) = oneshot::channel::<Result<Value, String>>();
-            let action = ServerAction::PathTo(src_x, src_y, src_z, dest_x, dest_y, dest_z);
-            server_tx.send(ServerMessage::Procedure { client_id: self.get_id(), action, tx }).await.unwrap();
+            let (tx, rx) = oneshot::channel::<Option<ReservedPath>>();
+            server_tx.send(ServerMessage::ReservePath { client_id: self.get_id(), x1: src_x, y1: src_y, z1: src_z, x2: dest_x, y2: dest_y, z2: dest_z, reply: tx }).await.unwrap();
     
-            let data = match rx.await {
-                Ok(Ok(data)) => data,
-                Ok(Err(e)) => return Err(TurtleError::VirtualError(e.to_string())),
+            let reservation = match rx.await {
+                Ok(Some(path)) => path,
+                Ok(None) => return Err(TurtleError::VirtualError("No viable path.".to_string())),
                 Err(e) => return Err(TurtleError::SocketError(e.to_string())),
             };
-    
-            let mut path: Vec<Vector3> = serde_json::from_value(data["path"].clone()).unwrap();
-    
-            // Bail out if no path at all could be found, which means it is unaccessible
-            if !data["success"].as_bool().unwrap_or(false) {
-                return Err(TurtleError::VirtualError("No viable path.".to_string()));
-            }
 
             // Path to next goal
+            let mut path = reservation.get_path().clone();
             let mut sequence = Vec::new();
             let mut previous = Vector3::from(self.get_position());
             let mut sim_direction = self.get_direction();
-            let last_spot = path.pop().unwrap_or(Vector3::new(dest_x, dest_y, dest_z));
+            let last_spot = path.pop().unwrap_or(Coord { x: dest_x, y: dest_y, z: dest_z, t: path.len() as u64 });
 
             for next in &path {
-                let delta = *next - previous;
-                previous = *next;
+                let next_vec = Vector3::from(*next);
+                let delta = next_vec - previous;
+                previous = next_vec;
 
                 let (mut move_seq, dir) = Turtle::create_movement_commands(delta.x, delta.y, delta.z, sim_direction);
                 sequence.append(&mut move_seq);
@@ -222,12 +216,14 @@ impl SmartTurtle for Turtle {
 
             if skip_last {
                 // Just face towards it
-                let delta = last_spot - previous;
+                let last_vec = Vector3::from(last_spot);
+                let delta = last_vec - previous;
                 let (mut move_seq, _) = Turtle::create_face_commands(sim_direction, delta.x, delta.z);
                 sequence.append(&mut move_seq);
             } else {
                 // Otherwise, move to it
-                let delta = last_spot - previous;
+                let last_vec: Vector3 = Vector3::from(last_spot);
+                let delta = last_vec - previous;
                 let (mut move_seq, _) = Turtle::create_movement_commands(delta.x, delta.y, delta.z, sim_direction);
                 sequence.append(&mut move_seq);
             }
@@ -237,6 +233,14 @@ impl SmartTurtle for Turtle {
 
             if !result.success {
                 eprintln!("Non-viable path {:?}", result.reason.unwrap_or("error pathing".to_string()));
+                self.scan_blocks().await?;
+                continue;
+            } else if skip_last && Vector3::from(last_spot) != Vector3::new(dest_x, dest_y, dest_z) {
+                println!("Finished window");
+                self.scan_blocks().await?;
+                continue;
+            } else if Vector3::from(last_spot).manhattan_distance(&Vector3::new(dest_x, dest_y, dest_z)) > 1 {
+                println!("Finished window");
                 self.scan_blocks().await?;
                 continue;
             }

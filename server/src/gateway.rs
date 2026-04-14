@@ -2,8 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{sync::{mpsc, oneshot}, task::JoinHandle};
 
-use crate::{managers::{block_manager::BlockManager, turtle_manager::TurtleManager}, util::vector::Vector3};
-use crate::pathfinding::pathfinding::find_path;
+use crate::{managers::{block_manager::BlockManager, path_manager::{PathLedger, ReservedPath}, turtle_manager::TurtleManager}, util::vector::Vector3};
 
 /// This module contains the server controller for incoming requests
 #[derive(Serialize, Deserialize)]
@@ -13,12 +12,12 @@ pub enum ServerAction {
     SetupGPS,
     StopGPS,
     UpdateBlock(i64, i64, i64, String),
-    PathTo(i64, i64, i64, i64, i64, i64),
 }
 
 pub enum ServerMessage {
     Procedure{ client_id: u64, action: ServerAction, tx: oneshot::Sender<Result<Value, String>>}, // The caller expects a response
     Oneshot{ client_id: u64, action: ServerAction }, // An action fired off and forgot about
+    ReservePath{ client_id: u64, x1: i64, y1: i64, z1: i64, x2: i64, y2: i64, z2: i64, reply: oneshot::Sender<Option<ReservedPath>> }
 }
 
 pub struct Gateway {
@@ -26,6 +25,7 @@ pub struct Gateway {
     sender: mpsc::Sender<ServerMessage>, // Used for cloning
     turtle_manager: TurtleManager,
     block_manager: BlockManager,
+    path_ledger: PathLedger,
 }
 
 impl Gateway {
@@ -33,19 +33,14 @@ impl Gateway {
         println!("Ping received from {id}");
     }
 
-    async fn start_gps_procedure(){
-        // This procedure finds 4 turtles which are not in use, tells them to move out into a constellation, then host GPS
-        // for another turtle to locate itself for bootstrapping
-    }
-
-    pub fn new(turtle_manager: TurtleManager, block_manager: BlockManager) -> Self {
+    pub fn new(turtle_manager: TurtleManager, block_manager: BlockManager, path_ledger: PathLedger) -> Self {
         // Start a MPSC channel to handle incoming requests
         let (tx, mut rx) = mpsc::channel::<ServerMessage>(32);
 
         // Spawn gateway thread to handle incoming requests
         let join_handle = tokio::spawn({
-            let turtle_manager = turtle_manager.clone();
             let block_manager = block_manager.clone();
+            let path_ledger = path_ledger.clone();
 
             async move {
                 println!("Starting gateway thread");
@@ -75,15 +70,22 @@ impl Gateway {
                                     Gateway::ping_oneshot(client_id);
                                     let _ = tx.send(Ok(json!({ "success": true })));
                                 },
-                                ServerAction::PathTo(x1, y1, z1, x2, y2, z2) => {
-                                    let res = find_path(&block_manager, Vector3::new(x1, y1, z1), Vector3::new(x2, y2, z2)).await;
-                                    let _ = tx.send(Ok(json!({ "success": res.is_some(), "path": res.unwrap_or(Vec::new()) })));
-                                },
                                 _ => {
                                     println!("Unknown procedure action received");
                                 }
                             }
                         }
+                        ServerMessage::ReservePath { client_id, x1, y1, z1, x2, y2, z2, reply } => {
+                            // Use WHCA* via path_ledger
+                            let result = path_ledger.reserve_path(
+                                client_id, 
+                                Vector3::new(x1, y1, z1), 
+                                Vector3::new(x2, y2, z2), 
+                                16 // Default window size
+                            );
+
+                            let _ = reply.send(result);
+                        },
                     }
                 }
 
@@ -95,7 +97,8 @@ impl Gateway {
             join_handle,
             sender: tx,
             turtle_manager,
-            block_manager
+            block_manager,
+            path_ledger,
         }
     }
 

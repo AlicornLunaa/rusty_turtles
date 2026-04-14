@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 
 use tokio::sync::{Mutex, RwLock};
 
@@ -7,26 +7,25 @@ use crate::turtle::client::Turtle;
 #[derive(Clone)]
 pub struct TurtleManager {
     turtles: Arc<RwLock<HashMap<u64, Arc<Mutex<Turtle>>>>>,
-    next_id: Arc<RwLock<u64>>,
+    next_id: Arc<AtomicU64>,
 }
 
 impl TurtleManager {
     pub fn new() -> Self {
         Self {
             turtles: Arc::new(RwLock::new(HashMap::new())),
-            next_id: Arc::new(RwLock::new(0)),
+            next_id: Arc::new(AtomicU64::new(0)),
         }
     }
 
     pub async fn get_next_id(&self) -> u64 {
-        *self.next_id.read().await
+        self.next_id.fetch_add(1, Ordering::SeqCst)
     }
 
     pub async fn add_turtle(&self, turtle: Arc<Mutex<Turtle>>) -> u64 {
-        let id = self.next_id.read().await;
-        self.turtles.write().await.insert(*id, turtle);
-        *self.next_id.write().await += 1;
-        *id
+        let id = self.next_id.load(Ordering::SeqCst);
+        self.turtles.write().await.insert(id, turtle);
+        id
     }
 
     pub async fn remove_turtle(&self, id: u64) -> bool {

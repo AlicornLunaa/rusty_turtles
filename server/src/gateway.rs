@@ -81,7 +81,7 @@ impl Gateway {
                                 client_id, 
                                 Vector3::new(x1, y1, z1), 
                                 Vector3::new(x2, y2, z2), 
-                                16 // Default window size
+                                32 // Default window size
                             );
 
                             let _ = reply.send(result);

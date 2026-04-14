@@ -169,7 +169,6 @@ impl PathLedger {
         path.reverse();
 
         if path.len() <= 1 && from != to {
-            println!("Returning None: from={:?}, to={:?}, best_node={:?}", from, to, best_node);
             return None;
         }
 

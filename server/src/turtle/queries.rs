@@ -99,5 +99,5 @@ pub struct GetEquippedRight;
 impl TurtleQuery for GetEquippedRight { const ACTION: &'static str = "GetEquippedRight"; type Response = Option<Value>; }
 
 #[derive(Serialize)]
-pub struct TurtleInit { pub version: u64 }
+pub struct TurtleInit { pub version: u64, pub script: String }
 impl TurtleQuery for TurtleInit { const ACTION: &'static str = "TurtleInit"; type Response = (i64, i64, i64, Direction); }

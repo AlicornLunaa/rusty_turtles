@@ -140,11 +140,11 @@ impl Turtle {
 
     async fn initial_handshake(turtle_tx: mpsc::Sender<TurtleMessage>) -> Result<(i64, i64, i64, Direction), String> {
         // Get a fresh turtle script in case there was an update
-        let (version, _) = script::read_turtle_script();
+        let (version, new_script) = script::read_turtle_script();
 
         // Send a message to the turtle's websocket
         let (tx, rx) = oneshot::channel::<TurtleResponse>();
-        let message = TurtleMessage::Query { query: TurtleInit { version }.to_payload(), response: tx };
+        let message = TurtleMessage::Query { query: TurtleInit { version, script: new_script }.to_payload(), response: tx };
 
         if let Err(e) = turtle_tx.send(message).await {
             // Something went wrong with the write stream

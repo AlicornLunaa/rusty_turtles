@@ -180,7 +180,7 @@ impl SmartTurtle for Turtle {
         }
     }
 
-    async fn path_to(&mut self, dest_x: i64, dest_y: i64, dest_z: i64, skip_last: bool) -> Result<(), TurtleError> {
+    async fn path_to(&mut self, dest_x: i64, dest_y: i64, dest_z: i64) -> Result<(), TurtleError> {
         // Pathfinds to a location, skip_last will stop the turtle from moving to the last spot in the path and instead face it
         let server_tx = self.get_server_tx().clone();
 
@@ -198,11 +198,10 @@ impl SmartTurtle for Turtle {
             };
 
             // Path to next goal
-            let mut path = reservation.get_path().clone();
+            let path = reservation.get_path().clone();
             let mut sequence = Vec::new();
             let mut previous = Vector3::from(self.get_position());
             let mut sim_direction = self.get_direction();
-            let last_spot = path.pop().unwrap_or(Coord { x: dest_x, y: dest_y, z: dest_z, t: path.len() as u64 });
 
             for next in &path {
                 let next_vec = Vector3::from(*next);
@@ -214,20 +213,6 @@ impl SmartTurtle for Turtle {
                 sim_direction = dir;
             }
 
-            if skip_last {
-                // Just face towards it
-                let last_vec = Vector3::from(last_spot);
-                let delta = last_vec - previous;
-                let (mut move_seq, _) = Turtle::create_face_commands(sim_direction, delta.x, delta.z);
-                sequence.append(&mut move_seq);
-            } else {
-                // Otherwise, move to it
-                let last_vec: Vector3 = Vector3::from(last_spot);
-                let delta = last_vec - previous;
-                let (mut move_seq, _) = Turtle::create_movement_commands(delta.x, delta.y, delta.z, sim_direction);
-                sequence.append(&mut move_seq);
-            }
-
             // Execute this movement sequence
             let result = self.execute_batch(sequence).await?;
 
@@ -235,11 +220,7 @@ impl SmartTurtle for Turtle {
                 eprintln!("Non-viable path {:?}", result.reason.unwrap_or("error pathing".to_string()));
                 self.scan_blocks().await?;
                 continue;
-            } else if skip_last && Vector3::from(last_spot) != Vector3::new(dest_x, dest_y, dest_z) {
-                println!("Finished window");
-                self.scan_blocks().await?;
-                continue;
-            } else if !skip_last && Vector3::from(last_spot).manhattan_distance(&Vector3::new(dest_x, dest_y, dest_z)) > 1 {
+            } else if Vector3::from(self.get_position()) != Vector3::new(dest_x, dest_y, dest_z) {
                 println!("Finished window");
                 self.scan_blocks().await?;
                 continue;

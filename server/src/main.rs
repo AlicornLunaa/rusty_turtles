@@ -73,8 +73,12 @@ async fn main() {
                         let mut turtle = turtle.lock().await;
 
                         println!("Starting pathing");
-                        turtle.path_to(4, 56, 12, true).await.unwrap();
-                        turtle.path_to(-7, 58, 14, false).await.unwrap();
+                        let (x, y, z) = turtle.get_position();
+                        turtle.path_to(-12, 56, -1).await.unwrap();
+                        turtle.path_to(x, y, z).await.unwrap();
+                        
+                        // turtle.path_to(4, 55, 12).await.unwrap();
+                        // turtle.path_to(-7, 58, 14).await.unwrap();
                         // turtle.move_to(2, 0, 0).await.unwrap();
                         // turtle.move_to(-2, 0, 0).await.unwrap();
                         // turtle.move_to(0, 0, 2).await.unwrap();
@@ -131,7 +135,7 @@ async fn main() {
         tokio::spawn(async move {
             // Accept the WebSocket connection and split it into a sender and receiver
             let mut ws_stream = tokio_tungstenite::accept_async(stream).await.expect("Failed to accept WebSocket connection");
-            println!("WebSocket connection established with {}", addr);
+            print!("WebSocket connection established with {} ", addr);
 
             if let Some(response) = ws_stream.next().await {
                 match response {
@@ -139,15 +143,16 @@ async fn main() {
                         // Simple text answer, either "turtle" or "client" for now.
                         match message.to_text().unwrap().trim().to_lowercase().as_str() {
                             "turtle" => {
+                                println!("it's a turtle");
                                 let new_turtle_id = turtle_manager.get_next_id().await;
                                 let turtle = Turtle::new(new_turtle_id, ws_stream, server_write_stream).await.unwrap();
                                 let turtle = Arc::new(Mutex::new(turtle));
                                 turtle_manager.add_turtle(turtle).await;
                             },
                             "client" => {
-                                let server_notif_stream = block_manager.subscribe();
+                                println!("it's a client");
                                 let new_client_id = client_manager.get_next_id().await;
-                                let client = Client::new(new_client_id, ws_stream, server_write_stream, server_notif_stream);
+                                let client = Client::new(new_client_id, ws_stream, server_write_stream, block_manager.subscribe());
                                 let client = Arc::new(Mutex::new(client));
                                 client_manager.add_client(client).await;
                             },

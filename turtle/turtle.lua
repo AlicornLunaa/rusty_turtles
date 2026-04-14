@@ -1,4 +1,4 @@
-local version = 1
+local version = 2
 
 -- This is a simple dumb terminal program for the turtle.
 -- It is intended to be the part of the program which executes commands
@@ -283,14 +283,45 @@ local query_table = {
         if args["version"] < version then
             print("Script is out of date!")
             sleep(4)
+
+            if args["script"] then
+                local file = fs.open("turtle.lua", "w")
+                file.write(args["script"])
+                file.close()
+                print("Script updated!")
+            end
+                
+            os.exit()
         end
 
         -- Try location with GPS, then see if a saved state exists, then ask server to host GPS, all else fails then manual entry
-        local location_data
-
         print(query_server(socket, { type = "Ping" }))
+        local location_data
+        local x, y, z = gps.locate()
 
-        if fs.exists("location.json") then
+        if x ~= nil then
+            -- GPS works, move forward and get the next position to determine face
+            turtle.forward()
+            local x2, y2, z2 = gps.locate()
+            turtle.back()
+            
+            local direction = "Unknown"
+            if x2 > x then
+                direction = "East"
+            elseif x2 < x then
+                direction = "West"
+            elseif z2 > z then
+                direction = "South"
+            elseif z2 < z then
+                direction = "North"
+            end
+            
+            location_data = { x = x, y = y, z = z, direction = direction }
+
+            local file = fs.open("location.json", "w")
+            file.write(textutils.serializeJSON(location_data))
+            file.close()
+        elseif fs.exists("location.json") then
             local file = fs.open("location.json", "r")
             local content = file.readAll()
             file.close()

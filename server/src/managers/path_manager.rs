@@ -165,9 +165,10 @@ impl PathLedger {
             path.push(Coord::from(curr));
             curr = prev;
         }
+        path.push(Coord::from((from, start_t)));
         path.reverse();
 
-        if path.is_empty() && from != to {
+        if path.len() <= 1 && from != to {
             println!("Returning None: from={:?}, to={:?}, best_node={:?}", from, to, best_node);
             return None;
         }
@@ -188,5 +189,171 @@ impl PathLedger {
         for coord in coordinates {
             let _ = self.ledger.remove(&coord);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+
+    async fn setup() -> (BlockManager, PathLedger) {
+        unsafe {
+            env::set_var("DATABASE_URL", "file:path_test?mode=memory&cache=shared");
+        }
+        let bm = BlockManager::new().await;
+        let pl = PathLedger::new(bm.clone());
+        (bm, pl)
+    }
+
+    #[tokio::test]
+    async fn test_simple_path() {
+        let (_bm, pl) = setup().await;
+        let from = Vector3::new(0, 0, 0);
+        let to = Vector3::new(2, 0, 0);
+        
+        let reserved = pl.reserve_path(1, from, to, 10).expect("Should find path");
+        let path = reserved.get_path();
+        
+        assert!(!path.is_empty());
+        assert_eq!(path[0].t, 0);
+        assert_eq!(path[0].x, 0);
+        assert_eq!(path.last().unwrap().x, 2);
+        assert_eq!(path.last().unwrap().y, 0);
+        assert_eq!(path.last().unwrap().z, 0);
+        
+        // Check that path is sequential in time starting from 0
+        for i in 0..path.len() {
+            assert_eq!(path[i].t, i as u64);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_obstacle_avoidance() {
+        let (bm, pl) = setup().await;
+        let from = Vector3::new(0, 0, 0);
+        let to = Vector3::new(2, 0, 0);
+        
+        // Place an obstacle at (1, 0, 0)
+        bm.update_block(1, 0, 0, "stone".to_string()).await;
+        
+        let reserved = pl.reserve_path(1, from, to, 10).expect("Should find path");
+        let path = reserved.get_path();
+        
+        // Should not contain (1, 0, 0)
+        for coord in path {
+            assert!(coord.x != 1 || coord.y != 0 || coord.z != 0);
+        }
+        
+        assert_eq!(path.last().unwrap().x, 2);
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_collision_avoidance() {
+        let (_bm, pl) = setup().await;
+        
+        // Turtle 1 reserves a path that goes through (1, 0, 0) at t=1
+        let t1_from = Vector3::new(0, 0, 0);
+        let t1_to = Vector3::new(2, 0, 0);
+        let reserved1 = pl.reserve_path(1, t1_from, t1_to, 10).expect("T1 should find path");
+        
+        // Turtle 2 tries to reserve a path that would normally go through (1, 0, 0) at t=1
+        // (e.g., from (1, 1, 0) to (1, -1, 0))
+        let t2_from = Vector3::new(1, 1, 0);
+        let t2_to = Vector3::new(1, -1, 0);
+        let reserved2 = pl.reserve_path(2, t2_from, t2_to, 10).expect("T2 should find path");
+        
+        let path1 = reserved1.get_path();
+        let path2 = reserved2.get_path();
+        
+        // Verify no collisions in space-time
+        for c1 in path1 {
+            for c2 in path2 {
+                if c1.t == c2.t {
+                    assert!(c1.x != c2.x || c1.y != c2.y || c1.z != c2.z, "Collision at t={}", c1.t);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_swap_collision_avoidance() {
+        let (_bm, pl) = setup().await;
+        
+        // Turtle 1 goes (0,0,0) -> (1,0,0)
+        let t1_from = Vector3::new(0, 0, 0);
+        let t1_to = Vector3::new(1, 0, 0);
+        let _reserved1 = pl.reserve_path(1, t1_from, t1_to, 10).expect("T1 path");
+        
+        // Turtle 2 tries to go (1,0,0) -> (0,0,0) at the same time
+        let t2_from = Vector3::new(1, 0, 0);
+        let t2_to = Vector3::new(0, 0, 0);
+        let reserved2 = pl.reserve_path(2, t2_from, t2_to, 10).expect("T2 path");
+        
+        // T2 should HAVE to wait or go around, but not swap directly
+        // If it goes around, path length will be > 1
+        // If it waits, it might take longer.
+        let path2 = reserved2.get_path();
+        
+        // At t=1, T1 is at (1,0,0). So T2 cannot be at (0,0,0) at t=1 if it means swapping
+        // Let's verify T2 path at t=1 isn't (0,0,0)
+        let t1_coord = path2.iter().find(|c| c.t == 1).expect("T2 should have a position at t=1");
+        assert!(t1_coord.x != 0 || t1_coord.y != 0 || t1_coord.z != 0, "Swap collision detected at t=1");
+    }
+
+    #[tokio::test]
+    async fn test_reservation_cleanup() {
+        let (_bm, pl) = setup().await;
+        let from = Vector3::new(0, 0, 0);
+        let to = Vector3::new(1, 0, 0);
+        
+        let coord_at_t0 = Coord { x: 0, y: 0, z: 0, t: 0 };
+        let coord_at_t1 = Coord { x: 1, y: 0, z: 0, t: 1 };
+        
+        {
+            let _reserved = pl.reserve_path(1, from, to, 10).expect("Path");
+            assert!(pl.ledger.contains_key(&coord_at_t0));
+            assert!(pl.ledger.contains_key(&coord_at_t1));
+        }
+        
+        // After drop, ledger should be empty
+        assert!(!pl.ledger.contains_key(&coord_at_t0));
+        assert!(!pl.ledger.contains_key(&coord_at_t1));
+    }
+
+    #[tokio::test]
+    async fn test_window_constraint() {
+        let (_bm, pl) = setup().await;
+        let from = Vector3::new(0, 0, 0);
+        let to = Vector3::new(10, 0, 0);
+        let window = 3;
+        
+        let reserved = pl.reserve_path(1, from, to, window).expect("Path");
+        let path = reserved.get_path();
+        
+        // Path length is window + 1 (including t=0)
+        assert!(path.len() <= (window + 1) as usize);
+        assert!(path.last().unwrap().t <= window as u64);
+        
+        // Should not have reached the goal (10, 0, 0)
+        assert!(path.last().unwrap().x < 10);
+    }
+
+    #[tokio::test]
+    async fn test_no_path_found() {
+        let (bm, pl) = setup().await;
+        let from = Vector3::new(0, 0, 0);
+        let to = Vector3::new(2, 0, 0);
+        
+        // Surround (0,0,0) with obstacles
+        bm.update_block(1, 0, 0, "stone".to_string()).await;
+        bm.update_block(-1, 0, 0, "stone".to_string()).await;
+        bm.update_block(0, 1, 0, "stone".to_string()).await;
+        bm.update_block(0, -1, 0, "stone".to_string()).await;
+        bm.update_block(0, 0, 1, "stone".to_string()).await;
+        bm.update_block(0, 0, -1, "stone".to_string()).await;
+        
+        let result = pl.reserve_path(1, from, to, 10);
+        assert!(result.is_none());
     }
 }

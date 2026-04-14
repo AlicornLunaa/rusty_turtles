@@ -239,7 +239,7 @@ impl SmartTurtle for Turtle {
                 println!("Finished window");
                 self.scan_blocks().await?;
                 continue;
-            } else if Vector3::from(last_spot).manhattan_distance(&Vector3::new(dest_x, dest_y, dest_z)) > 1 {
+            } else if !skip_last && Vector3::from(last_spot).manhattan_distance(&Vector3::new(dest_x, dest_y, dest_z)) > 1 {
                 println!("Finished window");
                 self.scan_blocks().await?;
                 continue;

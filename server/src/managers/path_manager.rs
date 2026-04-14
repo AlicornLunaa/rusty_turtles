@@ -124,19 +124,19 @@ impl PathLedger {
                 let next_t = t + 1;
                 let coord = Coord::from((neighbor, next_t));
 
-                // 1. Static collision check
+                // Static collision check
                 if self.block_manager.get_block(neighbor.x, neighbor.y, neighbor.z).is_some() {
                     continue;
                 }
 
-                // 2. Dynamic collision check
+                // Dynamic collision check
                 if let Some(res_id) = self.ledger.get(&coord) {
                     if *res_id != turtle_id {
                         continue;
                     }
                 }
 
-                // 3. Swap collision check
+                // Swap collision check
                 let swap_coord = Coord::from((current, next_t));
                 if let Some(res_id_at_neighbor_prev) = self.ledger.get(&Coord::from((neighbor, t))) {
                     if *res_id_at_neighbor_prev != turtle_id {
@@ -168,6 +168,7 @@ impl PathLedger {
         path.reverse();
 
         if path.is_empty() && from != to {
+            println!("Returning None: from={:?}, to={:?}, best_node={:?}", from, to, best_node);
             return None;
         }
 

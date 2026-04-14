@@ -22,14 +22,14 @@ impl TurtleManager {
         *self.next_id.read().await
     }
 
-    pub async fn add_turtle(&mut self, turtle: Arc<Mutex<Turtle>>) -> u64 {
+    pub async fn add_turtle(&self, turtle: Arc<Mutex<Turtle>>) -> u64 {
         let id = self.next_id.read().await;
         self.turtles.write().await.insert(*id, turtle);
         *self.next_id.write().await += 1;
         *id
     }
 
-    pub async fn remove_turtle(&mut self, id: u64) -> bool {
+    pub async fn remove_turtle(&self, id: u64) -> bool {
         self.turtles.write().await.remove(&id).is_some()
     }
 

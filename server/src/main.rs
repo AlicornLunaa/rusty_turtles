@@ -5,8 +5,10 @@ use futures_util::StreamExt;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
+use crate::client::Client;
 use crate::gateway::Gateway;
 use crate::managers::block_manager::BlockManager;
+use crate::managers::client_manager::ClientManager;
 use crate::managers::path_manager::PathLedger;
 use crate::managers::turtle_manager::TurtleManager;
 use crate::turtle::{SmartTurtle, Turtle};
@@ -35,6 +37,7 @@ async fn create_socket_server() -> TcpListener {
 #[tokio::main]
 async fn main() {
     // Initialize the database and the WebSocket server
+    let client_manager = ClientManager::new();
     let turtle_manager = TurtleManager::new();
     let block_manager = BlockManager::new().await;
     let path_ledger = PathLedger::new(block_manager.clone());
@@ -44,7 +47,7 @@ async fn main() {
 
     // Testing loop
     tokio::spawn({
-        let mut turtle_manager = turtle_manager.clone();
+        let turtle_manager = turtle_manager.clone();
         
         async move {
             // Spawn a thread which every 10 seconds spawns a thread to communicate with turtles
@@ -118,7 +121,9 @@ async fn main() {
     // Main loop to accept incoming connections and spawn a new task for each one
     loop {
         let (stream, addr) = listener.accept().await.expect("Failed to accept connection");
-        let mut turtle_manager = turtle_manager.clone();
+        let block_manager = block_manager.clone();
+        let turtle_manager = turtle_manager.clone();
+        let client_manager = client_manager.clone();
         let server_write_stream = gateway.get_sender();
 
         println!("New client connected from {}, determining type", addr);
@@ -139,7 +144,13 @@ async fn main() {
                                 let turtle = Arc::new(Mutex::new(turtle));
                                 turtle_manager.add_turtle(turtle).await;
                             },
-                            "client" => todo!(),
+                            "client" => {
+                                let server_notif_stream = block_manager.subscribe();
+                                let new_client_id = client_manager.get_next_id().await;
+                                let client = Client::new(new_client_id, ws_stream, server_write_stream, server_notif_stream);
+                                let client = Arc::new(Mutex::new(client));
+                                client_manager.add_client(client).await;
+                            },
                             _ => {
                                 eprintln!("Failed to select correct agent");
                                 return;

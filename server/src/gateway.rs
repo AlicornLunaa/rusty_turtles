@@ -82,7 +82,7 @@ impl Gateway {
                                 Vector3::new(x1, y1, z1), 
                                 Vector3::new(x2, y2, z2), 
                                 32 // Default window size
-                            );
+                            ).await;
 
                             let _ = reply.send(result);
                         },

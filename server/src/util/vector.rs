@@ -73,6 +73,11 @@ impl Vector3 {
     pub fn manhattan_distance(&self, other: &Self) -> i64 {
         (self.x - other.x).abs() + (self.y - other.y).abs() + (self.z - other.z).abs()
     }
+
+    pub fn length(&self) -> f64 {
+        let sqr = ((self.x * self.x) + (self.y * self.y) + (self.z * self.z)) as f64;
+        sqr.sqrt()
+    }
 }
 
 impl From<(i64, i64, i64)> for Vector3 {

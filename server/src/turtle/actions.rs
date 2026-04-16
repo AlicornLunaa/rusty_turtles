@@ -45,6 +45,7 @@ pub enum TurtleAction {
     // Misc
     Craft{limit: Option<u8>},
     Quit,
+    Wait,
     StartGpsHost,
     StopGpsHost,
     UpdateLocation{x: i64, y: i64, z: i64, direction: Direction}
@@ -183,50 +184,77 @@ impl SmartTurtle for Turtle {
     async fn path_to(&mut self, dest_x: i64, dest_y: i64, dest_z: i64) -> Result<(), TurtleError> {
         // Pathfinds to a location, skip_last will stop the turtle from moving to the last spot in the path and instead face it
         let server_tx = self.get_server_tx().clone();
+        let mut attempts = 0;
 
         // Iteratively loop to pathing towards the goal
         loop {
-            // Ask server for path
+            // Ask server for the path
             let (src_x, src_y, src_z) = self.get_position();
             let (tx, rx) = oneshot::channel::<Option<ReservedPath>>();
             server_tx.send(ServerMessage::ReservePath { client_id: self.get_id(), x1: src_x, y1: src_y, z1: src_z, x2: dest_x, y2: dest_y, z2: dest_z, reply: tx }).await.unwrap();
     
+            // See if we obtained a reserved path to travel, if not, no path can exist for us
             let reservation = match rx.await {
                 Ok(Some(path)) => path,
-                Ok(None) => return Err(TurtleError::VirtualError("No viable path.".to_string())),
+                Ok(None) => {
+                    attempts += 1;
+
+                    if attempts >= 5 {
+                        return Err(TurtleError::VirtualError("No viable path.".to_string()))
+                    }
+
+                    let _ = self.execute(TurtleAction::Wait).await;
+                    continue;
+                },
                 Err(e) => return Err(TurtleError::SocketError(e.to_string())),
             };
 
-            // Path to next goal
+            // Treat each block in the path as its own 'goal'
             let path = reservation.get_path().clone();
             let mut sequence = Vec::new();
             let mut previous = Vector3::from(self.get_position());
             let mut sim_direction = self.get_direction();
 
+            // Build all the commands to execute this path
             for next in &path {
                 let next_vec = Vector3::from(*next);
                 let delta = next_vec - previous;
                 previous = next_vec;
 
-                let (mut move_seq, dir) = Turtle::create_movement_commands(delta.x, delta.y, delta.z, sim_direction);
-                sequence.append(&mut move_seq);
-                sim_direction = dir;
+                if delta.length() > 0.0 {
+                    // The delta is a sizeable amount, so it must be a movement
+                    let (mut move_seq, dir) = Turtle::create_movement_commands(delta.x, delta.y, delta.z, sim_direction);
+                    sequence.append(&mut move_seq);
+                    sim_direction = dir;
+                } else {
+                    // The delta is nothing, this must be a wait request
+                    sequence.push(TurtleAction::Wait);
+                }
             }
 
             // Execute this movement sequence
-            let result = self.execute_batch(sequence).await?;
+            if !sequence.is_empty() {
+                let result = self.execute_batch(sequence).await?;
 
-            if !result.success {
-                eprintln!("Non-viable path {:?}", result.reason.unwrap_or("error pathing".to_string()));
-                self.scan_blocks().await?;
-                continue;
-            } else if Vector3::from(self.get_position()) != Vector3::new(dest_x, dest_y, dest_z) {
-                println!("Finished window");
-                self.scan_blocks().await?;
-                continue;
+                if !result.success {
+                    eprintln!("Non-viable path {:?}", result.reason.unwrap_or("error pathing".to_string()));
+                    self.scan_blocks().await?;
+                    continue;
+                }
+            } else {
+                // No moves made, lets wait a bit and try again?
+                self.execute(TurtleAction::Wait).await?;
+                println!("Waiting...");
             }
 
-            break;
+            // Break pathfinding if goal was obtained
+            if Vector3::from(self.get_position()) == Vector3::new(dest_x, dest_y, dest_z) {
+                break;
+            }
+
+            // Retry pathfinding again
+            println!("Finished window step, re-pathing...");
+            self.scan_blocks().await?;
         }
 
         Ok(())

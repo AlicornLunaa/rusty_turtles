@@ -22,10 +22,9 @@ impl TurtleManager {
         self.next_id.fetch_add(1, Ordering::SeqCst)
     }
 
-    pub async fn add_turtle(&self, turtle: Arc<Mutex<Turtle>>) -> u64 {
-        let id = self.next_id.load(Ordering::SeqCst);
+    pub async fn add_turtle(&self, turtle: Arc<Mutex<Turtle>>) {
+        let id = turtle.lock().await.get_id();
         self.turtles.write().await.insert(id, turtle);
-        id
     }
 
     pub async fn remove_turtle(&self, id: u64) -> bool {

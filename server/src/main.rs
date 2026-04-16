@@ -40,7 +40,7 @@ async fn main() {
     let client_manager = ClientManager::new();
     let turtle_manager = TurtleManager::new();
     let block_manager = BlockManager::new().await;
-    let path_ledger = PathLedger::new(block_manager.clone());
+    let path_ledger = PathLedger::new(block_manager.clone(), turtle_manager.clone());
     let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone(), path_ledger.clone());
 
     let listener = create_socket_server().await;
@@ -74,8 +74,14 @@ async fn main() {
 
                         println!("Starting pathing");
                         let (x, y, z) = turtle.get_position();
-                        turtle.path_to(-12, 56, -1).await.unwrap();
-                        turtle.path_to(x, y, z).await.unwrap();
+
+                        if turtle.get_id() == 0 {
+                            turtle.path_to(-12, 56, -4).await.unwrap();
+                            turtle.path_to(-12, 56, 3).await.unwrap();
+                        } else {
+                            turtle.path_to(-8, 56, -1).await.unwrap();
+                            turtle.path_to(-16, 56, -1).await.unwrap();
+                        }
                         
                         // turtle.path_to(4, 55, 12).await.unwrap();
                         // turtle.path_to(-7, 58, 14).await.unwrap();

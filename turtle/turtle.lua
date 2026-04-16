@@ -1,4 +1,4 @@
-local version = 2
+local version = 3
 
 -- This is a simple dumb terminal program for the turtle.
 -- It is intended to be the part of the program which executes commands
@@ -140,6 +140,9 @@ local action_table = {
     end,
 
     -- Custom
+    ["Wait"] = function(args)
+        sleep(0.6)
+    end,
     ["StartGpsHost"] = function(args, socket, server_req_id)
         -- This starts a blocking job to host GPS
         local success = true
@@ -200,8 +203,6 @@ local action_table = {
     end,
     ["UpdateLocation"] = function(args)
         local location_data = { x = args["x"], y = args["y"], z = args["z"], direction = args["direction"] }
-        print(args)
-
         local file, err = fs.open("location.json", "w")
 
         if file then

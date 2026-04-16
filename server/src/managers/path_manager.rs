@@ -1,8 +1,8 @@
-use std::{cmp::Ordering, collections::{BinaryHeap, HashMap}, sync::Arc};
+use std::{cmp::Ordering, collections::{BinaryHeap, HashMap}, sync::Arc, time::Instant};
 
 use dashmap::DashMap;
 
-use crate::{managers::block_manager::BlockManager, util::vector::Vector3};
+use crate::{managers::{block_manager::BlockManager, turtle_manager::TurtleManager}, util::vector::Vector3};
 
 /// 4D coordinate for cooperative A* in 3d space
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
@@ -23,6 +23,7 @@ impl From<Coord> for Vector3 {
 /// This holds a reservation within the ledger as long as it exists
 pub struct ReservedPath {
     ledger: PathLedger,
+    turtle_id: u64,
     path: Vec<Coord>,
 }
 
@@ -34,7 +35,7 @@ impl ReservedPath {
 
 impl Drop for ReservedPath {
     fn drop(&mut self) {
-        self.ledger.drop_path_reservation(&self.path);
+        self.ledger.drop_path_reservation(&self.path, self.turtle_id);
     }
 }
 
@@ -63,24 +64,31 @@ impl PartialOrd for Node {
 #[derive(Clone)]
 pub struct PathLedger {
     ledger: Arc<DashMap<Coord, u64>>, // Reserved blocks and when for turtle id
+    created_at: Arc<Instant>,
     block_manager: BlockManager,
 }
 
 impl PathLedger {
-    pub fn new(block_manager: BlockManager) -> PathLedger {
+    pub fn new(block_manager: BlockManager, _: TurtleManager) -> PathLedger {
         Self {
             ledger: Arc::new(DashMap::new()),
-            block_manager: block_manager,
+            created_at: Arc::new(Instant::now()),
+            block_manager,
         }
     }
 
-    pub fn reserve_path(&self, turtle_id: u64, from: Vector3, to: Vector3, window: u32) -> Option<ReservedPath> {
+    pub fn get_current_t(&self) -> u64 {
+        let elapsed_time = (self.created_at.elapsed().as_millis() as f64) / 500.0;
+        elapsed_time.floor() as u64 // Relative time estimated for this window request
+    }
+
+    pub async fn reserve_path(&self, turtle_id: u64, from: Vector3, to: Vector3, window: u32) -> Option<ReservedPath> {
         // WHCA* Implementation
         let mut open_set = BinaryHeap::new();
         let mut came_from: HashMap<(Vector3, u64), (Vector3, u64)> = HashMap::new();
         let mut g_score: HashMap<(Vector3, u64), i64> = HashMap::new();
 
-        let start_t = 0; // Relative time for this window
+        let start_t = self.get_current_t(); // Relative time estimated for this window request
         
         g_score.insert((from, start_t), 0);
         open_set.push(Node {
@@ -105,7 +113,7 @@ impl PathLedger {
                 best_node = (current, t);
             }
 
-            if t >= window as u64 {
+            if t >= (start_t + window as u64) {
                 continue;
             }
 
@@ -124,12 +132,12 @@ impl PathLedger {
                 let next_t = t + 1;
                 let coord = Coord::from((neighbor, next_t));
 
-                // Static collision check
+                // Static collision check (blocks)
                 if self.block_manager.get_block(neighbor.x, neighbor.y, neighbor.z).is_some() {
                     continue;
                 }
 
-                // Dynamic collision check
+                // Dynamic collision check (ledger)
                 if let Some(res_id) = self.ledger.get(&coord) {
                     if *res_id != turtle_id {
                         continue;
@@ -148,7 +156,10 @@ impl PathLedger {
                     }
                 }
 
-                let tentative_g_score = g_score.get(&(current, t)).unwrap() + 1;
+                let current_g = g_score.get(&(current, t)).cloned().unwrap_or(i64::MAX);
+                if current_g == i64::MAX { continue; } // Should not happen
+
+                let tentative_g_score = current_g + 1;
                 if tentative_g_score < *g_score.get(&(neighbor, next_t)).unwrap_or(&i64::MAX) {
                     came_from.insert((neighbor, next_t), (current, t));
                     g_score.insert((neighbor, next_t), tentative_g_score);
@@ -179,14 +190,16 @@ impl PathLedger {
 
         Some(ReservedPath {
             ledger: self.clone(),
+            turtle_id,
             path,
         })
     }
 
-    fn drop_path_reservation(&self, coordinates: &Vec<Coord>){
-        // Removes all the reservations in the ledger for the coordinate given
+    fn drop_path_reservation(&self, coordinates: &Vec<Coord>, turtle_id: u64){
+        // Removes all the reservations in the ledger for the coordinate given IF they belong to this turtle
         for coord in coordinates {
-            let _ = self.ledger.remove(&coord);
+            // Use remove_if to avoid deadlock (holding a read lock while trying to get a write lock)
+            self.ledger.remove_if(coord, |_, id| *id == turtle_id);
         }
     }
 }
@@ -196,22 +209,23 @@ mod tests {
     use super::*;
     use std::env;
 
-    async fn setup() -> (BlockManager, PathLedger) {
+    async fn setup(db_name: &str) -> (BlockManager, PathLedger) {
         unsafe {
-            env::set_var("DATABASE_URL", "file:path_test?mode=memory&cache=shared");
+            env::set_var("DATABASE_URL", format!("file:{}?mode=memory&cache=shared", db_name));
         }
         let bm = BlockManager::new().await;
-        let pl = PathLedger::new(bm.clone());
+        let tm = TurtleManager::new();
+        let pl = PathLedger::new(bm.clone(), tm.clone());
         (bm, pl)
     }
 
     #[tokio::test]
     async fn test_simple_path() {
-        let (_bm, pl) = setup().await;
+        let (_bm, pl) = setup("test_simple_path").await;
         let from = Vector3::new(0, 0, 0);
         let to = Vector3::new(2, 0, 0);
         
-        let reserved = pl.reserve_path(1, from, to, 10).expect("Should find path");
+        let reserved = pl.reserve_path(1, from, to, 10).await.expect("Should find path");
         let path = reserved.get_path();
         
         assert!(!path.is_empty());
@@ -229,14 +243,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_obstacle_avoidance() {
-        let (bm, pl) = setup().await;
+        let (bm, pl) = setup("test_obstacle_avoidance").await;
         let from = Vector3::new(0, 0, 0);
         let to = Vector3::new(2, 0, 0);
         
         // Place an obstacle at (1, 0, 0)
         bm.update_block(1, 0, 0, "stone".to_string()).await;
         
-        let reserved = pl.reserve_path(1, from, to, 10).expect("Should find path");
+        let reserved = pl.reserve_path(1, from, to, 10).await.expect("Should find path");
         let path = reserved.get_path();
         
         // Should not contain (1, 0, 0)
@@ -249,18 +263,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_dynamic_collision_avoidance() {
-        let (_bm, pl) = setup().await;
+        let (_bm, pl) = setup("test_dynamic_collision_avoidance").await;
         
         // Turtle 1 reserves a path that goes through (1, 0, 0) at t=1
         let t1_from = Vector3::new(0, 0, 0);
         let t1_to = Vector3::new(2, 0, 0);
-        let reserved1 = pl.reserve_path(1, t1_from, t1_to, 10).expect("T1 should find path");
+        let reserved1 = pl.reserve_path(1, t1_from, t1_to, 10).await.expect("T1 should find path");
         
         // Turtle 2 tries to reserve a path that would normally go through (1, 0, 0) at t=1
         // (e.g., from (1, 1, 0) to (1, -1, 0))
         let t2_from = Vector3::new(1, 1, 0);
         let t2_to = Vector3::new(1, -1, 0);
-        let reserved2 = pl.reserve_path(2, t2_from, t2_to, 10).expect("T2 should find path");
+        let reserved2 = pl.reserve_path(2, t2_from, t2_to, 10).await.expect("T2 should find path");
         
         let path1 = reserved1.get_path();
         let path2 = reserved2.get_path();
@@ -277,17 +291,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_swap_collision_avoidance() {
-        let (_bm, pl) = setup().await;
+        let (_bm, pl) = setup("test_swap_collision_avoidance").await;
         
         // Turtle 1 goes (0,0,0) -> (1,0,0)
         let t1_from = Vector3::new(0, 0, 0);
         let t1_to = Vector3::new(1, 0, 0);
-        let _reserved1 = pl.reserve_path(1, t1_from, t1_to, 10).expect("T1 path");
+        let _reserved1 = pl.reserve_path(1, t1_from, t1_to, 10).await.expect("T1 path");
         
         // Turtle 2 tries to go (1,0,0) -> (0,0,0) at the same time
         let t2_from = Vector3::new(1, 0, 0);
         let t2_to = Vector3::new(0, 0, 0);
-        let reserved2 = pl.reserve_path(2, t2_from, t2_to, 10).expect("T2 path");
+        let reserved2 = pl.reserve_path(2, t2_from, t2_to, 10).await.expect("T2 path");
         
         // T2 should HAVE to wait or go around, but not swap directly
         // If it goes around, path length will be > 1
@@ -302,7 +316,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reservation_cleanup() {
-        let (_bm, pl) = setup().await;
+        let (_bm, pl) = setup("test_reservation_cleanup").await;
         let from = Vector3::new(0, 0, 0);
         let to = Vector3::new(1, 0, 0);
         
@@ -310,7 +324,7 @@ mod tests {
         let coord_at_t1 = Coord { x: 1, y: 0, z: 0, t: 1 };
         
         {
-            let _reserved = pl.reserve_path(1, from, to, 10).expect("Path");
+            let _reserved = pl.reserve_path(1, from, to, 10).await.expect("Path");
             assert!(pl.ledger.contains_key(&coord_at_t0));
             assert!(pl.ledger.contains_key(&coord_at_t1));
         }
@@ -322,12 +336,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_window_constraint() {
-        let (_bm, pl) = setup().await;
+        let (_bm, pl) = setup("test_window_constraint").await;
         let from = Vector3::new(0, 0, 0);
         let to = Vector3::new(10, 0, 0);
         let window = 3;
         
-        let reserved = pl.reserve_path(1, from, to, window).expect("Path");
+        let reserved = pl.reserve_path(1, from, to, window).await.expect("Path");
         let path = reserved.get_path();
         
         // Path length is window + 1 (including t=0)
@@ -340,7 +354,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_path_found() {
-        let (bm, pl) = setup().await;
+        let (bm, pl) = setup("test_no_path_found").await;
         let from = Vector3::new(0, 0, 0);
         let to = Vector3::new(2, 0, 0);
         
@@ -352,7 +366,40 @@ mod tests {
         bm.update_block(0, 0, 1, "stone".to_string()).await;
         bm.update_block(0, 0, -1, "stone".to_string()).await;
         
-        let result = pl.reserve_path(1, from, to, 10);
+        let result = pl.reserve_path(1, from, to, 10).await;
         assert!(result.is_none());
     }
+
+    #[tokio::test]
+    async fn test_two_paths_avoid_each_other() {
+        let (_bm, pl) = setup("test_two_paths_avoid_each_other").await;
+        
+        // Turtle 1: (-2,0,0) -> (2,0,0)
+        let from1 = Vector3::new(-2, 0, 0);
+        let to1 = Vector3::new(2, 0, 0);
+        let reserved1 = pl.reserve_path(1, from1, to1, 10).await.expect("Path 1 should be found");
+        let path1 = reserved1.get_path();
+        
+        // Turtle 2: (0,-2,0) -> (0,2,0) (perpendicular path)
+        let from2 = Vector3::new(0, -2, 0);
+        let to2 = Vector3::new(0, 2, 0);
+        let reserved2 = pl.reserve_path(2, from2, to2, 10).await.expect("Path 2 should be found");
+        let path2 = reserved2.get_path();
+        
+        // Verify both paths were found
+        assert!(!path1.is_empty());
+        assert!(!path2.is_empty());
+        
+        // Check that paths don't collide at the same time
+        for coord1 in path1 {
+            for coord2 in path2 {
+                if coord1.t == coord2.t {
+                    // At the same time step, turtles should not occupy the same position
+                    assert!(coord1.x != coord2.x || coord1.y != coord2.y || coord1.z != coord2.z,
+                        "Paths collide at position ({}, {}, {}) at time {}", 
+                        coord1.x, coord1.y, coord1.z, coord1.t);
+                }
+            }
+        }
+    } 
 }

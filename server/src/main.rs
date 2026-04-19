@@ -9,7 +9,7 @@ use crate::client::Client;
 use crate::gateway::Gateway;
 use crate::managers::block_manager::BlockManager;
 use crate::managers::client_manager::ClientManager;
-use crate::managers::path_manager::PathLedger;
+use crate::managers::path_manager::PathManager;
 use crate::managers::turtle_manager::TurtleManager;
 use crate::turtle::{SmartTurtle, Turtle};
 
@@ -40,7 +40,7 @@ async fn main() {
     let client_manager = ClientManager::new();
     let turtle_manager = TurtleManager::new();
     let block_manager = BlockManager::new().await;
-    let path_ledger = PathLedger::new(block_manager.clone(), turtle_manager.clone());
+    let path_ledger = PathManager::new(block_manager.clone(), turtle_manager.clone());
     let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone(), path_ledger.clone());
 
     let listener = create_socket_server().await;

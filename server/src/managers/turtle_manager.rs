@@ -38,4 +38,8 @@ impl TurtleManager {
     pub async fn iter_turtles(&self) -> Vec<Arc<Mutex<Turtle>>> {
         self.turtles.read().await.values().cloned().collect()
     }
+
+    pub async fn iter_ids(&self) -> Vec<u64> {
+        self.turtles.read().await.keys().cloned().collect()
+    }
 }

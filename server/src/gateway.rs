@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{sync::{mpsc, oneshot}, task::JoinHandle};
 
-use crate::{managers::{block_manager::BlockManager, path_manager::{PathLedger, ReservedPath}, turtle_manager::TurtleManager}, util::vector::Vector3};
+use crate::{managers::{block_manager::BlockManager, path_manager::{PathManager, ReservedPath}, turtle_manager::TurtleManager}, util::vector::Vector3};
 
 /// This module contains the server controller for incoming requests
 #[derive(Serialize, Deserialize)]
@@ -25,7 +25,7 @@ pub struct Gateway {
     sender: mpsc::Sender<ServerMessage>, // Used for cloning
     turtle_manager: TurtleManager,
     block_manager: BlockManager,
-    path_ledger: PathLedger,
+    path_ledger: PathManager,
 }
 
 impl Gateway {
@@ -33,7 +33,7 @@ impl Gateway {
         println!("Ping received from {id}");
     }
 
-    pub fn new(turtle_manager: TurtleManager, block_manager: BlockManager, path_ledger: PathLedger) -> Self {
+    pub fn new(turtle_manager: TurtleManager, block_manager: BlockManager, path_ledger: PathManager) -> Self {
         // Start a MPSC channel to handle incoming requests
         let (tx, mut rx) = mpsc::channel::<ServerMessage>(32);
 
@@ -77,14 +77,20 @@ impl Gateway {
                         }
                         ServerMessage::ReservePath { client_id, x1, y1, z1, x2, y2, z2, reply } => {
                             // Use WHCA* via path_ledger
-                            let result = path_ledger.reserve_path(
+                            let result = path_ledger.path_to(
                                 client_id, 
                                 Vector3::new(x1, y1, z1), 
                                 Vector3::new(x2, y2, z2), 
                                 32 // Default window size
                             ).await;
 
-                            let _ = reply.send(result);
+                            if let Ok(reservation) = result {
+                                println!("Path reservation successful for client {client_id}");
+                                let _ = reply.send(Some(reservation));
+                            } else {
+                                println!("Path reservation failed for client {client_id}");
+                                let _ = reply.send(None);
+                            }
                         },
                     }
                 }

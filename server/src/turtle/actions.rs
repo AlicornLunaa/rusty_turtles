@@ -209,28 +209,9 @@ impl SmartTurtle for Turtle {
                 Err(e) => return Err(TurtleError::SocketError(e.to_string())),
             };
 
-            // Treat each block in the path as its own 'goal'
-            let path = reservation.get_path().clone();
-            let mut sequence = Vec::new();
-            let mut previous = Vector3::from(self.get_position());
-            let mut sim_direction = self.get_direction();
-
-            // Build all the commands to execute this path
-            for next in &path {
-                let next_vec = Vector3::from(*next);
-                let delta = next_vec - previous;
-                previous = next_vec;
-
-                if delta.length() > 0.0 {
-                    // The delta is a sizeable amount, so it must be a movement
-                    let (mut move_seq, dir) = Turtle::create_movement_commands(delta.x, delta.y, delta.z, sim_direction);
-                    sequence.append(&mut move_seq);
-                    sim_direction = dir;
-                } else {
-                    // The delta is nothing, this must be a wait request
-                    sequence.push(TurtleAction::Wait);
-                }
-            }
+            // Move forward a single block in the path then drop reservation and re-path
+            let delta = Vector3::from(reservation.get_path()[1]) - Vector3::new(src_x, src_y, src_z);
+            let (sequence, _) = Turtle::create_movement_commands(delta.x, delta.y, delta.z, self.get_direction());
 
             // Execute this movement sequence
             if !sequence.is_empty() {
@@ -241,10 +222,6 @@ impl SmartTurtle for Turtle {
                     self.scan_blocks().await?;
                     continue;
                 }
-            } else {
-                // No moves made, lets wait a bit and try again?
-                self.execute(TurtleAction::Wait).await?;
-                println!("Waiting...");
             }
 
             // Break pathfinding if goal was obtained
@@ -253,8 +230,7 @@ impl SmartTurtle for Turtle {
             }
 
             // Retry pathfinding again
-            println!("Finished window step, re-pathing...");
-            self.scan_blocks().await?;
+            println!("Finished for turtle {:?} step, re-pathing...", self.get_id());
         }
 
         Ok(())

@@ -3,6 +3,7 @@ use std::{cmp::Ordering, collections::{BinaryHeap, HashMap}, sync::Arc};
 use dashmap::DashMap;
 use tokio::{sync::{mpsc, oneshot}, task::JoinHandle};
 
+use crate::turtle::traits::SmartTurtle;
 use crate::{managers::{block_manager::BlockManager, turtle_manager::TurtleManager}, util::vector::Vector3};
 
 /// 4D coordinate for cooperative A* in 3d space
@@ -21,15 +22,6 @@ impl From<Coord> for Vector3 {
     }
 }
 
-/// This holds a path request for the path manager worker
-struct PathRequest {
-    turtle_id: u64,
-    from: Vector3,
-    to: Vector3,
-    window: u32,
-    response: oneshot::Sender<Result<ReservedPath, String>>, // Send back success or error message, allowing turtle to wait until complete
-}
-
 /// This holds a reservation within the ledger as long as it exists
 pub struct ReservedPath {
     ledger: Arc<DashMap<Coord, u64>>,
@@ -40,6 +32,15 @@ pub struct ReservedPath {
 impl ReservedPath {
     pub fn get_path(&self) -> &Vec<Coord> {
         &self.path
+    }
+
+    fn new(ledger: Arc<DashMap<Coord, u64>>, turtle_id: u64, path: Vec<Coord>) -> Self {
+        // Insert the reservation into the ledger
+        for coord in &path {
+            ledger.insert(*coord, turtle_id);
+        }
+
+        Self { ledger, turtle_id, path }
     }
 
     fn drop_path_reservation(&self){
@@ -79,16 +80,26 @@ impl PartialOrd for Node {
 }
 
 /// This handles all the paths within the ledger
-#[derive(Clone)]
 pub struct PathManager {
     ledger: Arc<DashMap<Coord, u64>>, // Reserved blocks and when for turtle id
+    goals: Arc<DashMap<u64, Vector3>>,
+    turtle_manager: TurtleManager,
     block_manager: BlockManager,
-    worker_handle: Arc<JoinHandle<()>>,
-    path_request_tx: mpsc::Sender<PathRequest>,
+    window: u64,
 }
 
 impl PathManager {
-    async fn reserve_path(ledger: Arc<DashMap<Coord, u64>>, block_manager: BlockManager, turtle_id: u64, from: Vector3, to: Vector3, window: u32) -> Option<ReservedPath> {
+    pub fn new(block_manager: BlockManager, turtle_manager: TurtleManager) -> PathManager {
+        Self {
+            ledger: Arc::new(DashMap::new()),
+            goals: Arc::new(DashMap::new()),
+            turtle_manager,
+            block_manager,
+            window: 32
+        }
+    }
+
+    fn reserve_dynamic_path(&self, turtle_id: u64, from: Vector3, to: Vector3) -> Option<ReservedPath> {
         // WHCA* Implementation
         let mut open_set = BinaryHeap::new();
         let mut came_from: HashMap<(Vector3, u64), (Vector3, u64)> = HashMap::new();
@@ -119,7 +130,7 @@ impl PathManager {
                 best_node = (current, t);
             }
 
-            if t >= (start_t + window as u64) {
+            if t >= (start_t + self.window) {
                 continue;
             }
 
@@ -139,12 +150,12 @@ impl PathManager {
                 let coord = Coord::from((neighbor, next_t));
 
                 // Static collision check (blocks)
-                if block_manager.get_block(neighbor.x, neighbor.y, neighbor.z).is_some() {
+                if self.block_manager.get_block(neighbor.x, neighbor.y, neighbor.z).is_some() {
                     continue;
                 }
 
                 // Dynamic collision check (ledger)
-                if let Some(res_id) = ledger.get(&coord) {
+                if let Some(res_id) = self.ledger.get(&coord) {
                     if *res_id != turtle_id {
                         continue;
                     }
@@ -152,9 +163,9 @@ impl PathManager {
 
                 // Swap collision check
                 let swap_coord = Coord::from((current, next_t));
-                if let Some(res_id_at_neighbor_prev) = ledger.get(&Coord::from((neighbor, t))) {
+                if let Some(res_id_at_neighbor_prev) = self.ledger.get(&Coord::from((neighbor, t))) {
                     if *res_id_at_neighbor_prev != turtle_id {
-                        if let Some(res_id_at_current_next) = ledger.get(&swap_coord) {
+                        if let Some(res_id_at_current_next) = self.ledger.get(&swap_coord) {
                             if *res_id_at_current_next == *res_id_at_neighbor_prev {
                                 continue;
                             }
@@ -191,119 +202,99 @@ impl PathManager {
 
         // Reserve in ledger
         for coord in &path {
-            ledger.insert(*coord, turtle_id);
+            self.ledger.insert(*coord, turtle_id);
         }
 
-        Some(ReservedPath {
-            ledger: Arc::clone(&ledger),
-            turtle_id,
-            path,
-        })
+        Some(ReservedPath::new(Arc::clone(&self.ledger), turtle_id, path))
     }
 
-    fn reserve_spot_for_window(ledger: Arc<DashMap<Coord, u64>>, turtle_id: u64, pos: Vector3, window: u32) -> ReservedPath {
-        // Reserve the current spot up to window
+    fn reserve_stationary_turtle(&self, turtle_id: u64, pos: Vector3) -> ReservedPath {
+        // Reserve the current spot up to window, used for stationary turtles that still need to be considered in pathfinding
         let mut dummy_path = Vec::new();
 
-        for i in 0..window as u64 {
-            let coord = Coord::from((pos, i)); // Time doesn't matter for dummy reservation
-            ledger.insert(coord, turtle_id);
-            dummy_path.push(coord);
+        for i in 0..self.window {
+            dummy_path.push(Coord::from((pos, i)));
         }
 
-        ReservedPath {
-            ledger,
-            turtle_id,
-            path: dummy_path,
-        }
+        ReservedPath::new(Arc::clone(&self.ledger), turtle_id, dummy_path)
     }
 
-    pub fn new(block_manager: BlockManager, turtle_manager: TurtleManager) -> PathManager {
-        let (path_request_tx, mut path_request_rx) = mpsc::channel(100);
-        let ledger = Arc::new(DashMap::new());
+    pub fn set_window(&mut self, window: u64) {
+        self.window = window;
+    }
 
-        let worker_handle = tokio::spawn({
-            // This thread will consume every request to reserve a path and process it sequentially to avoid concurrency issues with the ledger
-            // Then it will send back the result through the oneshot channel in the request, allowing the turtle to move one space all at the same time,
-            let block_manager = block_manager.clone();
-            let ledger = ledger.clone();
+    pub fn set_goal(&self, turtle_id: u64, to: Vector3) {
+        // Sets this turtle's goal before execution of a path
+        self.goals.insert(turtle_id, to);
+    }
 
-            async move {
-                loop {
-                    // Wait until there are no active reservations in the ledger before processing the next batch of requests
-                    while !ledger.is_empty() {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    pub async fn execute(&self) -> HashMap<u64, Result<(), String>> {
+        // This should be called after every turtle has reserved its path for the current window
+        // it will path every turtle to their goal given within this plan
+        let mut results = HashMap::new();
+
+        while results.len() < self.goals.len() {
+            // For every turtle in this plan, get a reservation for its path to the goal
+            let mut reservations = Vec::new(); // This is only needed to keep the reservations alive
+
+            for entry in self.goals.iter() {
+                let turtle_id = *entry.key();
+                let goal = *entry.value();
+                
+                // Skip if turtle already has a result
+                if results.contains_key(&turtle_id) {
+                    continue;
+                }
+
+                // Get the path reserved
+                if let Some(turtle) = self.turtle_manager.get_turtle(turtle_id).await {
+                    let turtle = turtle.lock().await;
+                    let current_pos = Vector3::from(turtle.get_position());
+
+                    if let Some(reservation) = self.reserve_dynamic_path(turtle_id, current_pos, goal) {
+                        reservations.push((turtle_id, reservation));
+                    } else {
+                        // The reservation couldnt be made, therefore the path probably doesn't exist.
+                        results.insert(turtle_id, Err("No path.".to_string()));
                     }
-
-                    // Collect all available requests but block for the first one at least
-                    let mut requests = vec![match path_request_rx.recv().await {
-                        Some(msg) => msg,
-                        None => break, // channel closed
-                    }];
-
-                    while let Ok(msg) = path_request_rx.try_recv() {
-                        // Batch process all available requests because they must all be coordinates for lockstep WHCA*
-                        requests.push(msg);
-                    }
-
-                    // Now that we have a list of all the path requests, any turtle without an active request should reserve its spot up to W
-                    let ids_with_requests = requests.iter().map(|r: &PathRequest| r.turtle_id).collect::<Vec<_>>();
-                    let ids_without_requests = turtle_manager.iter_ids().await.into_iter().filter(|id| !ids_with_requests.contains(id)).collect::<Vec<_>>();
-                    let mut reservations_for_non_requesters = Vec::new(); // This is needed to keep the dummy reservations alive
-
-                    for turtle_id in ids_without_requests {
-                        // ! Reminder: Deadlock is here
-                        let turtle = turtle_manager.get_turtle(turtle_id).await.unwrap();
-                        let turtle = turtle.lock().await;
-                        reservations_for_non_requesters.push(PathManager::reserve_spot_for_window(Arc::clone(&ledger), turtle_id, turtle.get_position().into(), 32));
-                    }
-                    
-                    // Process the whole batch sequentially
-                    for request in requests {
-                        let PathRequest { turtle_id, from, to, window, response } = request;
-                        let reservation = PathManager::reserve_path(Arc::clone(&ledger), block_manager.clone(), turtle_id, from, to, window).await;
-
-                        match reservation {
-                            Some(res) => {
-                                let _ = response.send(Ok(res));
-                            },
-                            None => {
-                                let _ = response.send(Err("No path found".into()));
-                            }
-                        };
-                    }
+                } else {
+                    // Turtle disappeared, maybe it got destroyed or something, just ignore it for this window
+                    results.insert(turtle_id, Err("Couldn't acquire turtle.".to_string()));
                 }
             }
-        });
 
-        Self {
-            ledger,
-            block_manager,
-            worker_handle: Arc::new(worker_handle),
-            path_request_tx,
+            // Loop for every reservation and execute the first step
+            for (turtle_id, reservation) in reservations {
+                // If reservation is just one block, the goal was found
+                if reservation.get_path().len() <= 1 {
+                    results.insert(turtle_id, Ok(()));
+                    continue;
+                }
+
+                // Acquire turtle control
+                if let Some(turtle) = self.turtle_manager.get_turtle(turtle_id).await {
+                    let mut turtle = turtle.lock().await;
+                    let delta = Vector3::from(reservation.get_path()[1]) - Vector3::from(reservation.get_path()[0]);
+                    
+                    match turtle.move_to(delta.x, delta.y, delta.z).await {
+                        Ok(()) => {}, // Success, do nothing and wait for next loop to move the next block
+                        Err(_) => {
+                            // Error occured, but this isnt the end. Scan all the blocks and wait for next iteration
+                            let _ = turtle.scan_blocks().await;
+                        }
+                    }
+                } else {
+                    // Turtle disappeared, maybe it got destroyed or something, just ignore it for this window
+                    results.insert(turtle_id, Err("Couldn't acquire turtle.".to_string()));
+                }
+            }
         }
-    }
+        
+        // Execution is done, every turtle should maybe be at the goal
+        self.goals.clear();
 
-    pub async fn path_to(&self, turtle_id: u64, from: Vector3, to: Vector3, window: u32) -> Result<ReservedPath, String> {
-        // Send a path request to the worker and wait for the response
-        let (response_tx, response_rx) = oneshot::channel();
-        let request = PathRequest { turtle_id, from, to, window, response: response_tx };
-
-        if self.path_request_tx.send(request).await.is_err() {
-            return Err("Worker has shut down".into());
-        }
-
-        // Wait for the worker to process the request and send back the result
-        response_rx.await.map_err(|_| "Worker failed to respond".to_string())?
-    }
-}
-
-impl Drop for PathManager {
-    fn drop(&mut self) {
-        // Only abort if the arc pointer has no other references, otherwise the worker might still be running
-        if Arc::strong_count(&self.worker_handle) == 1 {
-            self.worker_handle.abort();
-        }
+        // Return the result of all the turtle's pathing
+        results
     }
 }
 
@@ -328,7 +319,7 @@ mod tests {
         let from = Vector3::new(0, 0, 0);
         let to = Vector3::new(2, 0, 0);
         
-        let reserved = PathManager::reserve_path(pl.ledger.clone(), pl.block_manager.clone(), 1, from, to, 10).await.expect("Should find path");
+        let reserved = PathManager::reserve_dynamic_path(pl.ledger.clone(), pl.block_manager.clone(), 1, from, to, 10).await.expect("Should find path");
         let path = reserved.get_path();
         
         assert!(!path.is_empty());
@@ -353,7 +344,7 @@ mod tests {
         // Place an obstacle at (1, 0, 0)
         bm.update_block(1, 0, 0, "stone".to_string()).await;
         
-        let reserved = PathManager::reserve_path(pl.ledger.clone(), pl.block_manager.clone(), 1, from, to, 10).await.expect("Should find path");
+        let reserved = PathManager::reserve_dynamic_path(pl.ledger.clone(), pl.block_manager.clone(), 1, from, to, 10).await.expect("Should find path");
         let path = reserved.get_path();
         
         // Should not contain (1, 0, 0)
@@ -371,13 +362,13 @@ mod tests {
         // Turtle 1 reserves a path that goes through (1, 0, 0) at t=1
         let t1_from = Vector3::new(0, 0, 0);
         let t1_to = Vector3::new(2, 0, 0);
-        let reserved1 = PathManager::reserve_path(pl.ledger.clone(), pl.block_manager.clone(), 1, t1_from, t1_to, 10).await.expect("T1 should find path");
+        let reserved1 = PathManager::reserve_dynamic_path(pl.ledger.clone(), pl.block_manager.clone(), 1, t1_from, t1_to, 10).await.expect("T1 should find path");
         
         // Turtle 2 tries to reserve a path that would normally go through (1, 0, 0) at t=1
         // (e.g., from (1, 1, 0) to (1, -1, 0))
         let t2_from = Vector3::new(1, 1, 0);
         let t2_to = Vector3::new(1, -1, 0);
-        let reserved2 = PathManager::reserve_path(pl.ledger.clone(), pl.block_manager.clone(), 2, t2_from, t2_to, 10).await.expect("T2 should find path");
+        let reserved2 = PathManager::reserve_dynamic_path(pl.ledger.clone(), pl.block_manager.clone(), 2, t2_from, t2_to, 10).await.expect("T2 should find path");
         
         let path1 = reserved1.get_path();
         let path2 = reserved2.get_path();
@@ -399,12 +390,12 @@ mod tests {
         // Turtle 1 goes (0,0,0) -> (1,0,0)
         let t1_from = Vector3::new(0, 0, 0);
         let t1_to = Vector3::new(1, 0, 0);
-        let _reserved1 = PathManager::reserve_path(pl.ledger.clone(), pl.block_manager.clone(), 1, t1_from, t1_to, 10).await.expect("T1 path");
+        let _reserved1 = PathManager::reserve_dynamic_path(pl.ledger.clone(), pl.block_manager.clone(), 1, t1_from, t1_to, 10).await.expect("T1 path");
         
         // Turtle 2 tries to go (1,0,0) -> (0,0,0) at the same time
         let t2_from = Vector3::new(1, 0, 0);
         let t2_to = Vector3::new(0, 0, 0);
-        let reserved2 = PathManager::reserve_path(pl.ledger.clone(), pl.block_manager.clone(), 2, t2_from, t2_to, 10).await.expect("T2 path");
+        let reserved2 = PathManager::reserve_dynamic_path(pl.ledger.clone(), pl.block_manager.clone(), 2, t2_from, t2_to, 10).await.expect("T2 path");
         
         // T2 should HAVE to wait or go around, but not swap directly
         // If it goes around, path length will be > 1
@@ -427,7 +418,7 @@ mod tests {
         let coord_at_t1 = Coord { x: 1, y: 0, z: 0, t: 1 };
         
         {
-            let _reserved = PathManager::reserve_path(pl.ledger.clone(), pl.block_manager.clone(), 1, from, to, 10).await.expect("Path");
+            let _reserved = PathManager::reserve_dynamic_path(pl.ledger.clone(), pl.block_manager.clone(), 1, from, to, 10).await.expect("Path");
             assert!(pl.ledger.contains_key(&coord_at_t0));
             assert!(pl.ledger.contains_key(&coord_at_t1));
         }
@@ -444,7 +435,7 @@ mod tests {
         let to = Vector3::new(10, 0, 0);
         let window = 3;
         
-        let reserved = PathManager::reserve_path(pl.ledger.clone(), pl.block_manager.clone(), 1, from, to, window).await.expect("Path");
+        let reserved = PathManager::reserve_dynamic_path(pl.ledger.clone(), pl.block_manager.clone(), 1, from, to, window).await.expect("Path");
         let path = reserved.get_path();
         
         // Path length is window + 1 (including t=0)
@@ -469,7 +460,7 @@ mod tests {
         bm.update_block(0, 0, 1, "stone".to_string()).await;
         bm.update_block(0, 0, -1, "stone".to_string()).await;
         
-        let result = PathManager::reserve_path(pl.ledger.clone(), pl.block_manager.clone(), 1, from, to, 10).await;
+        let result = PathManager::reserve_dynamic_path(pl.ledger.clone(), pl.block_manager.clone(), 1, from, to, 10).await;
         assert!(result.is_none());
     }
 
@@ -480,13 +471,13 @@ mod tests {
         // Turtle 1: (-2,0,0) -> (2,0,0)
         let from1 = Vector3::new(-2, 0, 0);
         let to1 = Vector3::new(2, 0, 0);
-        let reserved1 = PathManager::reserve_path(pl.ledger.clone(), pl.block_manager.clone(), 1, from1, to1, 10).await.expect("Path 1 should be found");
+        let reserved1 = PathManager::reserve_dynamic_path(pl.ledger.clone(), pl.block_manager.clone(), 1, from1, to1, 10).await.expect("Path 1 should be found");
         let path1 = reserved1.get_path();
         
         // Turtle 2: (0,-2,0) -> (0,2,0) (perpendicular path)
         let from2 = Vector3::new(0, -2, 0);
         let to2 = Vector3::new(0, 2, 0);
-        let reserved2 = PathManager::reserve_path(pl.ledger.clone(), pl.block_manager.clone(), 2, from2, to2, 10).await.expect("Path 2 should be found");
+        let reserved2 = PathManager::reserve_dynamic_path(pl.ledger.clone(), pl.block_manager.clone(), 2, from2, to2, 10).await.expect("Path 2 should be found");
         let path2 = reserved2.get_path();
         
         // Verify both paths were found

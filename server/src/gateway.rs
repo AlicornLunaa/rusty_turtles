@@ -85,10 +85,8 @@ impl Gateway {
                             ).await;
 
                             if let Ok(reservation) = result {
-                                println!("Path reservation successful for client {client_id}");
                                 let _ = reply.send(Some(reservation));
                             } else {
-                                println!("Path reservation failed for client {client_id}");
                                 let _ = reply.send(None);
                             }
                         },

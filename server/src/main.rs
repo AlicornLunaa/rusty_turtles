@@ -11,7 +11,8 @@ use crate::managers::block_manager::BlockManager;
 use crate::managers::client_manager::ClientManager;
 use crate::managers::path_manager::PathManager;
 use crate::managers::turtle_manager::TurtleManager;
-use crate::turtle::{SmartTurtle, Turtle};
+use crate::turtle::Turtle;
+use crate::util::vector::Vector3;
 
 mod managers;
 mod gateway;
@@ -40,8 +41,8 @@ async fn main() {
     let client_manager = ClientManager::new();
     let turtle_manager = TurtleManager::new();
     let block_manager = BlockManager::new().await;
-    let path_ledger = PathManager::new(block_manager.clone(), turtle_manager.clone());
-    let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone(), path_ledger.clone());
+    let planner = PathManager::new(block_manager.clone(), turtle_manager.clone());
+    let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone());
 
     let listener = create_socket_server().await;
 
@@ -53,7 +54,7 @@ async fn main() {
             // Spawn a thread which every 10 seconds spawns a thread to communicate with turtles
             loop {
                 let turtles_to_remove = Arc::new(Mutex::new(HashSet::new()));
-                let mut handles = Vec::new();
+                // let mut handles = Vec::new();
 
                 for turtle in turtle_manager.iter_turtles().await {
                     // Make sure the turtle is valid
@@ -67,21 +68,34 @@ async fn main() {
                     }
 
                     // Start a future action
-                    let turtles_to_remove_inner = Arc::clone(&turtles_to_remove);
-                    
-                    let action = async move {
-                        let mut turtle = turtle.lock().await;
+                    planner.set_goal(0, Vector3::new(-12, 56, -4));
+                    planner.set_goal(1, Vector3::new(-8, 56, -1));
+                    planner.execute().await;
+                    planner.set_goal(0, Vector3::new(-12, 56, 3));
+                    planner.set_goal(1, Vector3::new(-16, 56, -1));
+                    let results = planner.execute().await;
 
-                        println!("Starting pathing");
-                        let (x, y, z) = turtle.get_position();
-
-                        if turtle.get_id() == 0 {
-                            turtle.path_to(-12, 56, -4).await.unwrap();
-                            turtle.path_to(-12, 56, 3).await.unwrap();
-                        } else {
-                            turtle.path_to(-8, 56, -1).await.unwrap();
-                            turtle.path_to(-16, 56, -1).await.unwrap();
+                    // Add all failed turtles to the removal list
+                    for (turtle_id, result) in results {
+                        if let Err(e) = result {
+                            println!("Failed to execute path for turtle {turtle_id}: {e}");
+                            turtles_to_remove.lock().await.insert(turtle_id);
                         }
+                    }
+                    
+                    // let action = async move {
+                    //     let mut turtle = turtle.lock().await;
+
+                    //     println!("Starting pathing");
+                    //     let (x, y, z) = turtle.get_position();
+
+                        // if turtle.get_id() == 0 {
+                        //     turtle.path_to(-12, 56, -4).await.unwrap();
+                        //     turtle.path_to(-12, 56, 3).await.unwrap();
+                        // } else {
+                        //     turtle.path_to(-8, 56, -1).await.unwrap();
+                        //     turtle.path_to(-16, 56, -1).await.unwrap();
+                        // }
                         
                         // turtle.path_to(4, 55, 12).await.unwrap();
                         // turtle.path_to(-7, 58, 14).await.unwrap();
@@ -100,16 +114,16 @@ async fn main() {
                         // turtle.move_to(-4, -2, -4).await.unwrap();
                         // turtle.move_to(2, 0, 2).await.unwrap();
 
-                        if !turtle.is_valid().await {
-                            turtles_to_remove_inner.lock().await.insert(turtle.get_id());
-                        }
-                    };
+                    //     if !turtle.is_valid().await {
+                    //         turtles_to_remove_inner.lock().await.insert(turtle.get_id());
+                    //     }
+                    // };
 
-                    handles.push(action);
+                    // handles.push(action);
                 }
                 
                 // Run all turtle actions concurrently
-                futures_util::future::join_all(handles).await;
+                // futures_util::future::join_all(handles).await;
 
                 {
                     // Remove turtles marked as invalid

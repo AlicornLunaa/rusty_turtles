@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{sync::{mpsc, oneshot}, task::JoinHandle};
 
-use crate::{managers::{block_manager::BlockManager, path_manager::{PathManager, ReservedPath}, turtle_manager::TurtleManager}, util::vector::Vector3};
+use crate::managers::{block_manager::BlockManager, turtle_manager::TurtleManager};
 
 /// This module contains the server controller for incoming requests
 #[derive(Serialize, Deserialize)]
@@ -17,7 +17,6 @@ pub enum ServerAction {
 pub enum ServerMessage {
     Procedure{ client_id: u64, action: ServerAction, tx: oneshot::Sender<Result<Value, String>>}, // The caller expects a response
     Oneshot{ client_id: u64, action: ServerAction }, // An action fired off and forgot about
-    ReservePath{ client_id: u64, x1: i64, y1: i64, z1: i64, x2: i64, y2: i64, z2: i64, reply: oneshot::Sender<Option<ReservedPath>> }
 }
 
 pub struct Gateway {
@@ -25,7 +24,6 @@ pub struct Gateway {
     sender: mpsc::Sender<ServerMessage>, // Used for cloning
     turtle_manager: TurtleManager,
     block_manager: BlockManager,
-    path_ledger: PathManager,
 }
 
 impl Gateway {
@@ -33,14 +31,13 @@ impl Gateway {
         println!("Ping received from {id}");
     }
 
-    pub fn new(turtle_manager: TurtleManager, block_manager: BlockManager, path_ledger: PathManager) -> Self {
+    pub fn new(turtle_manager: TurtleManager, block_manager: BlockManager) -> Self {
         // Start a MPSC channel to handle incoming requests
         let (tx, mut rx) = mpsc::channel::<ServerMessage>(32);
 
         // Spawn gateway thread to handle incoming requests
         let join_handle = tokio::spawn({
             let block_manager = block_manager.clone();
-            let path_ledger = path_ledger.clone();
 
             async move {
                 println!("Starting gateway thread");
@@ -75,21 +72,6 @@ impl Gateway {
                                 }
                             }
                         }
-                        ServerMessage::ReservePath { client_id, x1, y1, z1, x2, y2, z2, reply } => {
-                            // Use WHCA* via path_ledger
-                            let result = path_ledger.path_to(
-                                client_id, 
-                                Vector3::new(x1, y1, z1), 
-                                Vector3::new(x2, y2, z2), 
-                                32 // Default window size
-                            ).await;
-
-                            if let Ok(reservation) = result {
-                                let _ = reply.send(Some(reservation));
-                            } else {
-                                let _ = reply.send(None);
-                            }
-                        },
                     }
                 }
 
@@ -102,7 +84,6 @@ impl Gateway {
             sender: tx,
             turtle_manager,
             block_manager,
-            path_ledger,
         }
     }
 

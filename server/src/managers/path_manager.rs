@@ -313,27 +313,34 @@ impl PathManager {
             }
 
             // Loop for every reservation and execute the first step
+            let mut handles = Vec::new();
+            
             for (turtle_id, path) in &paths {
                 // Acquire turtle control
-                if let Some(turtle) = self.turtle_manager.get_turtle(*turtle_id).await {
-                    let mut turtle = turtle.lock().await;
-                    let current_pos = Vector3::from(turtle.get_position());
-                    let delta = path[1].pos - current_pos;
-                    
-                    if delta.x != 0 || delta.y != 0 || delta.z != 0 {
-                        match turtle.move_to(delta.x, delta.y, delta.z).await {
-                            Ok(()) => {}, // Success
-                            Err(_) => {
-                                // Error occured, scan blocks and try again next iteration
-                                let _ = turtle.scan_blocks().await;
+                let turtle = self.turtle_manager.get_turtle(*turtle_id).await;
+
+                let action = async move {
+                    if let Some(turtle) = turtle {
+                        let mut turtle = turtle.lock().await;
+                        let current_pos = Vector3::from(turtle.get_position());
+                        let delta = path[1].pos - current_pos;
+                        
+                        if delta.x != 0 || delta.y != 0 || delta.z != 0 {
+                            match turtle.move_to(delta.x, delta.y, delta.z).await {
+                                Ok(()) => {}, // Success
+                                Err(_) => {
+                                    // Error occured, scan blocks and try again next iteration
+                                    let _ = turtle.scan_blocks().await;
+                                }
                             }
                         }
                     }
-
-                    // ! Pause a bit just to debug
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                }
+                };
+                
+                handles.push(action);
             }
+            
+            futures_util::future::join_all(handles).await;
         }
         
         // Execution is done, every turtle should maybe be at the goal

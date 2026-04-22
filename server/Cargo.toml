@@ -15,3 +15,4 @@ serde_repr = "0.1.20"
 tokio-rusqlite = { version = "0.7.0", features = ["bundled"] }
 dashmap = "6.1.0"
 rand = "0.10.1"
+chrono = "0.4.44"

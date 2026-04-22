@@ -58,18 +58,17 @@ async fn main() {
                 // Start a future action
                 planner.set_goal(0, Vector3::new(-12, 56, -4));
                 planner.set_goal(1, Vector3::new(-8, 56, -1));
+                planner.set_goal(2, Vector3::new(-6, 56, -7));
                 planner.execute().await;
                 planner.set_goal(0, Vector3::new(-12, 56, 3));
-                planner.set_goal(1, Vector3::new(-16, 56, -1));
+                planner.set_goal(1, Vector3::new(-19, 56, -1));
+                planner.set_goal(2, Vector3::new(-18, 56, 4));
                 let results = planner.execute().await;
 
-                // Add all failed turtles to the removal list
-                for (turtle_id, result) in results {
-                    if let Err(e) = result {
-                        println!("Failed to execute path for turtle {turtle_id}: {e}");
-                        turtles_to_remove.lock().await.insert(turtle_id);
-                    }
+                for (i, result) in results.iter().enumerate() {
+                    println!("Turtle {i} path: {result:?}");
                 }
+                println!();
 
                 for turtle in turtle_manager.iter_turtles().await {
                     // Make sure the turtle is valid
@@ -95,7 +94,7 @@ async fn main() {
                     turtles_to_remove.clear();
                 }
 
-                tokio::time::sleep(tokio::time::Duration::from_millis(10000)).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
         }
     });

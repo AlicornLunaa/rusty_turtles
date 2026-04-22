@@ -150,10 +150,23 @@ impl PathManager {
             for neighbor in neighbors {
                 let next_tick = current.tick + 1;
                 let next_coord = Coord { pos: neighbor, tick: next_tick };
+                let mut unknown_path = true;
+                let mut last_updated = 0;
 
                 // Static collision check (blocks)
                 if let Some(block) = self.block_manager.get_block(neighbor.x, neighbor.y, neighbor.z) {
-                    if block != "minecraft:air" {
+                    // Block must not be air and have been updated within the last 5 minutes
+                    let five_minutes_ago = chrono::Utc::now().timestamp() - 300;
+
+                    if block.block_type == "minecraft:air" {
+                        // We know this path is clear, it should be prioritized a little
+                        unknown_path = false;
+                    }
+
+                    // If the block was updated more than 5 minutes ago, consider it unknown to allow for natural terrain changes, but still prefer known paths
+                    last_updated = (chrono::Utc::now().timestamp() - block.last_updated) / 60; // The older the block, the less we trust it, up to a maximum of 5 minutes where we consider it completely unknown
+
+                    if block.block_type != "minecraft:air" && block.last_updated >= five_minutes_ago {
                         continue;
                     }
                 }
@@ -184,7 +197,23 @@ impl PathManager {
                 let current_g = g_score.get(&current).cloned().unwrap_or(i64::MAX);
                 if current_g == i64::MAX { continue; } // Should not happen
 
-                let tentative_g_score = if neighbor == current.pos { current_g + 1 } else { current_g + 2 }; // Waiting costs 1, moving costs 2 (to prefer waiting when possible)
+                // Determine cost for waiting vs moving and known vs unknown blocks
+                let mut tentative_g_score = current_g;
+
+                if neighbor != current.pos {
+                    tentative_g_score += 2; // Moving costs 2
+                } else {
+                    tentative_g_score += 1; // Waiting costs 1
+                }
+
+                if unknown_path {
+                    tentative_g_score += 2; // Heavily penalize paths through unknown blocks to encourage known paths, but still allow if no other options
+                }
+
+                tentative_g_score -= last_updated / 2; // The older the block information, the less we trust it, so we reduce the cost the older it is to encourage using it but still prefer newer information
+                tentative_g_score = tentative_g_score.max(current_g + 1); // Ensure that we always prefer moving forward in time, even if the heuristic is bad, to prevent infinite loops
+
+                // Check scores
                 if tentative_g_score < *g_score.get(&next_coord).unwrap_or(&i64::MAX) {
                     came_from.insert(next_coord, current);
                     g_score.insert(next_coord, tentative_g_score);

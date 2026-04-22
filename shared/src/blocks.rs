@@ -7,6 +7,7 @@ pub struct Block {
     pub y: i64,
     pub z: i64,
     pub block_type: String,
+    pub last_updated: i64,
 }
 
 #[derive(Debug, Clone)]

@@ -19,7 +19,7 @@ pub enum BlockManagerCommand {
 /// Common interactor for outside module
 #[derive(Clone)]
 pub struct BlockManager {
-    grid: Arc<DashMap<Coord, String>>,
+    grid: Arc<DashMap<Coord, (String, i64)>>,
     database_tx: mpsc::Sender<BlockManagerCommand>,
     notification_tx: sync::broadcast::Sender<BlockNotification>,
 }
@@ -37,7 +37,7 @@ impl BlockManager {
                 match cmd {
                     BlockManagerCommand::UpdateBlock { x, y, z, block_type } => {
                         // Await the slow database insert here
-                        db_connection.upsert_block(Block { x, y, z, block_type }).await.unwrap();
+                        db_connection.upsert_block(Block { x, y, z, block_type, last_updated: 0 }).await.unwrap();
                     },
                     BlockManagerCommand::RemoveBlock { x, y, z } => {
                         db_connection.remove_block(x, y, z).await.unwrap();
@@ -63,7 +63,7 @@ impl BlockManager {
         };
 
         for block in block_data {
-            grid.insert(Coord { x: block.x, y: block.y, z: block.z }, block.block_type.clone());
+            grid.insert(Coord { x: block.x, y: block.y, z: block.z }, (block.block_type.clone(), block.last_updated));
         }
 
         // Return the completed object
@@ -79,9 +79,9 @@ impl BlockManager {
     }
 
     pub async fn update_block(&self, x: i64, y: i64, z: i64, block_type: String) {
-        self.grid.insert(Coord { x, y, z }, block_type.clone());
+        self.grid.insert(Coord { x, y, z }, (block_type.clone(), chrono::Utc::now().timestamp()));
 
-        let _ = self.notification_tx.send(BlockNotification::Update(Block { x, y, z, block_type: block_type.clone() }));
+        let _ = self.notification_tx.send(BlockNotification::Update(Block { x, y, z, block_type: block_type.clone(), last_updated: chrono::Utc::now().timestamp() }));
         let _ = self.database_tx.send(BlockManagerCommand::UpdateBlock { x, y, z, block_type }).await;
     }
 
@@ -92,15 +92,18 @@ impl BlockManager {
         let _ = self.database_tx.send(BlockManagerCommand::RemoveBlock { x, y, z }).await;
     }
 
-    pub fn get_block(&self, x: i64, y: i64, z: i64) -> Option<String> {
-        self.grid.get(&Coord { x, y, z }).map(|entry| entry.value().clone())
+    pub fn get_block(&self, x: i64, y: i64, z: i64) -> Option<Block> {
+        self.grid.get(&Coord { x, y, z }).map(|entry| {
+            let (block_type, last_updated) = entry.value().clone();
+            Block { x, y, z, block_type, last_updated }
+        })
     }
 
     pub fn iter_blocks(&self) -> Vec<Block> {
         self.grid.iter().map(|entry| {
             let coord = entry.key();
-            let block_type = entry.value().clone();
-            Block { x: coord.x, y: coord.y, z: coord.z, block_type }
+            let (block_type, last_updated) = entry.value().clone();
+            Block { x: coord.x, y: coord.y, z: coord.z, block_type, last_updated }
         }).collect()
     }
 }

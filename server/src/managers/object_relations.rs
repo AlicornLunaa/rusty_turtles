@@ -46,6 +46,7 @@ impl ORM {
                     y INTEGER NOT NULL,
                     z INTEGER NOT NULL,
                     block_type TEXT NOT NULL,
+                    last_updated INTEGER DEFAULT (strftime('%s', 'now')),
                     PRIMARY KEY (x, y, z)
                 )",
             ())?;
@@ -72,7 +73,7 @@ impl ORM {
     pub async fn upsert_block(&self, block: Block) -> Result<()> {
         self.conn.call(move |conn| {
             conn.execute(
-                "INSERT INTO blocks (x, y, z, block_type) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (x, y, z) DO UPDATE SET block_type = excluded.block_type",
+                "INSERT INTO blocks (x, y, z, block_type, last_updated) VALUES (?1, ?2, ?3, ?4, strftime('%s', 'now')) ON CONFLICT (x, y, z) DO UPDATE SET block_type = excluded.block_type, last_updated = excluded.last_updated",
                 params![block.x, block.y, block.z, block.block_type],
             )?;
             Ok(())
@@ -94,21 +95,21 @@ impl ORM {
     pub async fn get_block(&self, x: i64, y: i64, z: i64) -> Option<Block> {
         let data = self.conn.call(move |conn| {
             conn.query_row(
-                "SELECT block_type FROM blocks WHERE x = ?1 AND y = ?2 AND z = ?3",
+                "SELECT block_type, last_updated FROM blocks WHERE x = ?1 AND y = ?2 AND z = ?3",
                 params![x, y, z],
-                |row| row.get::<_, String>(0),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
             )
         }).await.ok();
         
         match data {
-            Some(block_type) => Some(Block { x, y, z, block_type }),
+            Some((block_type, last_updated)) => Some(Block { x, y, z, block_type, last_updated }),
             None => None,
         }
     }
 
     pub async fn get_all_blocks(&self) -> Result<Vec<Block>> {
         let blocks = self.conn.call(move |conn| {
-            let mut stmt = conn.prepare("SELECT x, y, z, block_type FROM blocks")?;
+            let mut stmt = conn.prepare("SELECT x, y, z, block_type, last_updated FROM blocks")?;
 
             let block_iter = stmt.query_map([], |row| {
                 Ok(Block {
@@ -116,6 +117,7 @@ impl ORM {
                     y: row.get(1)?,
                     z: row.get(2)?,
                     block_type: row.get(3)?,
+                    last_updated: row.get(4)?,
                 })
             })?;
 
@@ -215,11 +217,12 @@ mod tests {
         let orm = ORM::new().await;
         orm.create_tables().await.unwrap();
 
-        let block = Block { x: 1, y: 2, z: 3, block_type: "stone".to_string() };
+        let block = Block { x: 1, y: 2, z: 3, block_type: "stone".to_string(), last_updated: 0 };
         orm.upsert_block(block).await.unwrap();
 
         let retrieved = orm.get_block(1, 2, 3).await.unwrap();
         assert_eq!(retrieved.block_type, "stone");
+        assert_ne!(retrieved.last_updated, 0);
 
         orm.remove_block(1, 2, 3).await.unwrap();
         assert!(orm.get_block(1, 2, 3).await.is_none());
@@ -259,7 +262,7 @@ mod tests {
         }
 
         let orm = ORM::new().await;
-        let block = Block { x: 1, y: 2, z: 3, block_type: "stone".to_string() };
+        let block = Block { x: 1, y: 2, z: 3, block_type: "stone".to_string(), last_updated: 0 };
         let chest = Chest { x: 4, y: 5, z: 6, count: 10, max_count: 20, item_type: "diamond".to_string() };
         orm.create_tables().await.unwrap();
         orm.upsert_block(block).await.unwrap();

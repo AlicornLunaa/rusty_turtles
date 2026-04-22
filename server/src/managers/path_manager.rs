@@ -5,9 +5,9 @@ use crate::{managers::{block_manager::BlockManager, turtle_manager::TurtleManage
 
 // Space-time coordinate
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-struct Coord {
-    pos: Vector3,
-    tick: usize,
+pub struct Coord {
+    pub pos: Vector3,
+    pub tick: usize,
 }
 
 type ReservationMap = HashMap<Coord, u64>;
@@ -231,6 +231,112 @@ impl PathManager {
         self.goals.insert(turtle_id, to);
     }
 
+    pub async fn execute_step(&mut self, results: &mut HashMap<u64, Result<(), String>>, paths: &mut HashMap<u64, Vec<Coord>>) {
+        // Reset state for this step of planning
+        self.reservations.clear();
+        self.transitions.clear();
+        paths.clear();
+        
+        // Check for existence and goal completion
+        let all_turtle_ids = self.turtle_manager.iter_ids().await;
+        let ids_in_goals: Vec<u64> = self.goals.keys().cloned().collect();
+
+        for turtle_id in ids_in_goals {
+            if results.contains_key(&turtle_id) { continue; }
+
+            if let Some(turtle) = self.turtle_manager.get_turtle(turtle_id).await {
+                let turtle = turtle.lock().await;
+                let current_pos = Vector3::from(turtle.get_position());
+                if let Some(goal) = self.goals.get(&turtle_id) {
+                    if current_pos == *goal {
+                        results.insert(turtle_id, Ok(()));
+                    }
+                }
+            } else {
+                results.insert(turtle_id, Err("Couldn't acquire turtle.".to_string()));
+            }
+        }
+
+        if results.len() >= self.goals.len() {
+            return;
+        }
+
+        // Pre-reserve all turtles' current positions
+        for turtle_id in &all_turtle_ids {
+            if let Some(turtle) = self.turtle_manager.get_turtle(*turtle_id).await {
+                let turtle = turtle.lock().await;
+                let current_pos = Vector3::from(turtle.get_position());
+                let path = vec![Coord { pos: current_pos, tick: self.tick }, Coord { pos: current_pos, tick: self.tick + 1 }];
+                self.reserve(*turtle_id, path);
+            }
+        }
+
+        // Identify and reserve stationary turtles (including those that reached goal or failed)
+        for turtle_id in &all_turtle_ids {
+            let is_dynamic = self.goals.contains_key(turtle_id) && !results.contains_key(turtle_id);
+
+            if !is_dynamic {
+                if let Some(turtle) = self.turtle_manager.get_turtle(*turtle_id).await {
+                    let turtle = turtle.lock().await;
+                    let current_pos = Vector3::from(turtle.get_position());
+                    self.reserve(*turtle_id, self.static_path(current_pos));
+                }
+            }
+        }
+        
+        // For every turtle in this plan, get a reservation for its path to the goal
+        let ids_and_goals = self.goals.iter()
+            .filter(|(id, _)| !results.contains_key(id))
+            .map(|(id, goal)| (*id, *goal))
+            .collect::<Vec<_>>();
+
+        for (turtle_id, goal) in ids_and_goals {
+            if let Some(turtle) = self.turtle_manager.get_turtle(turtle_id).await {
+                let turtle = turtle.lock().await;
+                let current_pos = Vector3::from(turtle.get_position());
+
+                if let Some(path) = self.dynamic_path(turtle_id, current_pos, goal) {
+                    if self.reserve(turtle_id, path.clone()) {
+                        paths.insert(turtle_id, path);
+                    }
+                } else {
+                    // The reservation couldnt be made, therefore the path probably doesn't exist.
+                    results.insert(turtle_id, Err("No path.".to_string()));
+                }
+            }
+        }
+
+        // Loop for every reservation and execute the first step
+        let mut handles = Vec::new();
+        
+        for (turtle_id, path) in paths {
+            // Acquire turtle control
+            let turtle = self.turtle_manager.get_turtle(*turtle_id).await;
+
+            let action = async move {
+                if let Some(turtle) = turtle {
+                    let mut turtle = turtle.lock().await;
+                    let current_pos = Vector3::from(turtle.get_position());
+                    let delta = path[1].pos - current_pos;
+                    
+                    if delta.x != 0 || delta.y != 0 || delta.z != 0 {
+                        match turtle.move_to(delta.x, delta.y, delta.z).await {
+                            Ok(()) => {}, // Success
+                            Err(_) => {
+                                // Error occured, scan blocks and try again next iteration
+                                let _ = turtle.scan_blocks().await;
+                            }
+                        }
+                    }
+                }
+            };
+            
+            handles.push(action);
+        }
+        
+        futures_util::future::join_all(handles).await;
+    }
+
     pub async fn execute(&mut self) -> HashMap<u64, Result<(), String>> {
         // This should be called after every turtle has reserved its path for the current window
         // it will path every turtle to their goal given within this plan
@@ -239,108 +345,7 @@ impl PathManager {
 
         while results.len() < self.goals.len() {
             // Reset state for this step of planning
-            self.reservations.clear();
-            self.transitions.clear();
-            paths.clear();
-            
-            // Check for existence and goal completion
-            let all_turtle_ids = self.turtle_manager.iter_ids().await;
-            let ids_in_goals: Vec<u64> = self.goals.keys().cloned().collect();
-
-            for turtle_id in ids_in_goals {
-                if results.contains_key(&turtle_id) { continue; }
-
-                if let Some(turtle) = self.turtle_manager.get_turtle(turtle_id).await {
-                    let turtle = turtle.lock().await;
-                    let current_pos = Vector3::from(turtle.get_position());
-                    if let Some(goal) = self.goals.get(&turtle_id) {
-                        if current_pos == *goal {
-                            results.insert(turtle_id, Ok(()));
-                        }
-                    }
-                } else {
-                    results.insert(turtle_id, Err("Couldn't acquire turtle.".to_string()));
-                }
-            }
-
-            if results.len() >= self.goals.len() {
-                break;
-            }
-
-            // Pre-reserve all turtles' current positions
-            for turtle_id in &all_turtle_ids {
-                if let Some(turtle) = self.turtle_manager.get_turtle(*turtle_id).await {
-                    let turtle = turtle.lock().await;
-                    let current_pos = Vector3::from(turtle.get_position());
-                    let path = vec![Coord { pos: current_pos, tick: self.tick }, Coord { pos: current_pos, tick: self.tick + 1 }];
-                    self.reserve(*turtle_id, path);
-                }
-            }
-
-            // Identify and reserve stationary turtles (including those that reached goal or failed)
-            for turtle_id in &all_turtle_ids {
-                let is_dynamic = self.goals.contains_key(turtle_id) && !results.contains_key(turtle_id);
-
-                if !is_dynamic {
-                    if let Some(turtle) = self.turtle_manager.get_turtle(*turtle_id).await {
-                        let turtle = turtle.lock().await;
-                        let current_pos = Vector3::from(turtle.get_position());
-                        self.reserve(*turtle_id, self.static_path(current_pos));
-                    }
-                }
-            }
-            
-            // For every turtle in this plan, get a reservation for its path to the goal
-            let ids_and_goals = self.goals.iter()
-                .filter(|(id, _)| !results.contains_key(id))
-                .map(|(id, goal)| (*id, *goal))
-                .collect::<Vec<_>>();
-
-            for (turtle_id, goal) in ids_and_goals {
-                if let Some(turtle) = self.turtle_manager.get_turtle(turtle_id).await {
-                    let turtle = turtle.lock().await;
-                    let current_pos = Vector3::from(turtle.get_position());
-
-                    if let Some(path) = self.dynamic_path(turtle_id, current_pos, goal) {
-                        if self.reserve(turtle_id, path.clone()) {
-                            paths.insert(turtle_id, path);
-                        }
-                    } else {
-                        // The reservation couldnt be made, therefore the path probably doesn't exist.
-                        results.insert(turtle_id, Err("No path.".to_string()));
-                    }
-                }
-            }
-
-            // Loop for every reservation and execute the first step
-            let mut handles = Vec::new();
-            
-            for (turtle_id, path) in &paths {
-                // Acquire turtle control
-                let turtle = self.turtle_manager.get_turtle(*turtle_id).await;
-
-                let action = async move {
-                    if let Some(turtle) = turtle {
-                        let mut turtle = turtle.lock().await;
-                        let current_pos = Vector3::from(turtle.get_position());
-                        let delta = path[1].pos - current_pos;
-                        
-                        if delta.x != 0 || delta.y != 0 || delta.z != 0 {
-                            match turtle.move_to(delta.x, delta.y, delta.z).await {
-                                Ok(()) => {}, // Success
-                                Err(_) => {
-                                    // Error occured, scan blocks and try again next iteration
-                                    let _ = turtle.scan_blocks().await;
-                                }
-                            }
-                        }
-                    }
-                };
-                
-                handles.push(action);
-            }
-            
-            futures_util::future::join_all(handles).await;
+            self.execute_step(&mut results, &mut paths).await;
         }
         
         // Execution is done, every turtle should maybe be at the goal

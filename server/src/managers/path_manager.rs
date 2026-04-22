@@ -1,12 +1,22 @@
-use std::{cmp::Ordering, collections::{BinaryHeap, HashMap, HashSet}};
+use std::{cmp::Ordering, collections::{BinaryHeap, HashMap}};
 
 use crate::turtle::traits::SmartTurtle;
 use crate::{managers::{block_manager::BlockManager, turtle_manager::TurtleManager}, util::vector::Vector3};
 
+// Space-time coordinate
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+struct Coord {
+    pos: Vector3,
+    tick: usize,
+}
+
+type ReservationMap = HashMap<Coord, u64>;
+type TransitionMap = HashMap<(Vector3, Vector3, usize), u64>;
+
 /// A* stuff
 #[derive(Copy, Clone, Eq, PartialEq)]
 struct Node {
-    pos: Vector3,
+    coord: Coord,
     f_score: i64,
 }
 
@@ -22,35 +32,13 @@ impl PartialOrd for Node {
     }
 }
 
-/// Time cooperation
-struct TimeSlice {
-    nodes: HashMap<Vector3, u64>,
-    edges: HashSet<(Vector3, Vector3)>,
-}
-
-impl TimeSlice {
-    fn new() -> TimeSlice {
-        TimeSlice {
-            nodes: HashMap::new(),
-            edges: HashSet::new(),
-        }
-    }
-
-    fn is_occupied(&self, pos: Vector3) -> bool {
-        self.nodes.contains_key(&pos)
-    }
-
-    fn has_edge(&self, from: Vector3, to: Vector3) -> bool {
-        self.edges.contains(&(from, to))
-    }
-}
-
 /// This handles all the paths within the ledger
 pub struct PathManager {
     turtle_manager: TurtleManager,
     block_manager: BlockManager,
     goals: HashMap<u64, Vector3>,
-    reservations: Vec<TimeSlice>,
+    reservations: ReservationMap,
+    transitions: TransitionMap,
     window: u64,
     tick: usize,
 }
@@ -61,125 +49,147 @@ impl PathManager {
             turtle_manager,
             block_manager,
             goals: HashMap::new(),
-            reservations: Vec::new(),
+            reservations: HashMap::new(),
+            transitions: HashMap::new(),
             window: 32,
             tick: 0,
         }
     }
 
-    fn get_slice(&mut self, t: usize) -> &mut TimeSlice {
-        &mut self.reservations[t - self.tick]
-    }
-
-    fn advance_tick(&mut self) {
-        self.tick += 1;
-        self.reservations.remove(0);
-        self.reservations.push(TimeSlice::new());
-    }
-
-    fn reserve(&mut self, turtle_id: u64, path: Vec<(Vector3, usize)>) -> bool {
+    fn reserve(&mut self, turtle_id: u64, path: Vec<Coord>) -> bool {
         // Try to reserve the given path for the turtle, return true if successful, false if any conflicts
-        for i in 0..(path.len() - 1) {
-            let (from, t) = path[i];
-            let (to, next_t) = path[i + 1];
-
-            // Check node reservation
-            if self.get_slice(t).is_occupied(from) || self.get_slice(next_t).is_occupied(to) {
-                return false;
-            }
-
-            // Check edge reservation (swap check)
-            if self.get_slice(t).has_edge(to, from) {
-                return false;
+        // First check for conflicts
+        for coord in &path {
+            if let Some(other_turtle) = self.reservations.get(coord) {
+                if *other_turtle != turtle_id {
+                    return false; // Already reserved by another turtle
+                }
             }
         }
 
-        // If we got here, the path is clear. Reserve it.
+        // Then check for swap collisions
         for i in 0..(path.len() - 1) {
-            let (from, t) = path[i];
-            let (to, next_t) = path[i + 1];
+            let from = path[i];
+            let to = path[i + 1];
 
-            self.get_slice(t).nodes.insert(from, turtle_id);
-            self.get_slice(next_t).nodes.insert(to, turtle_id);
-            self.get_slice(t).edges.insert((from, to));
+            if let Some(other_turtle) = self.transitions.get(&(from.pos, to.pos, from.tick)) {
+                if *other_turtle != turtle_id {
+                    return false; // Swap collision
+                }
+            }
+
+            if let Some(other_turtle) = self.transitions.get(&(to.pos, from.pos, from.tick)) {
+                if *other_turtle != turtle_id {
+                    return false; // Swap collision
+                }
+            }
+        }
+
+        // Save everything
+        for coord in &path {
+            self.reservations.insert(*coord, turtle_id);
+        }
+
+        for i in 0..(path.len() - 1) {
+            let from = path[i];
+            let to = path[i + 1];
+            self.transitions.insert((from.pos, to.pos, from.tick), turtle_id);
         }
 
         true
     }
 
-    fn dynamic_path(&self, from: Vector3, to: Vector3) -> Option<Vec<(Vector3, usize)>> {
-        // WHCA* Implementation
+    fn dynamic_path(&self, turtle_id: u64, from: Vector3, to: Vector3) -> Option<Vec<Coord>> {
+        // A* solving for a path from 'from' to 'to' while avoiding static blocks and dynamic reservations in the ledger
         let mut open_set = BinaryHeap::new();
-        let mut came_from: HashMap<(Vector3, usize), (Vector3, usize)> = HashMap::new();
-        let mut g_score: HashMap<(Vector3, usize), i64> = HashMap::new();
+        let mut came_from: HashMap<Coord, Coord> = HashMap::new();
+        let mut g_score: HashMap<Coord, i64> = HashMap::new();
 
-        let t = self.tick; // Relative time estimated for this window request
+        let start_tick = self.tick;
+        let start_coord = Coord { pos: from, tick: start_tick };
         
-        g_score.insert((from, t), 0);
+        g_score.insert(start_coord, 0);
         open_set.push(Node {
-            pos: from,
+            coord: start_coord,
             f_score: Vector3::manhattan_distance(&from, &to),
         });
 
-        let mut best_node = (from, t);
+        let mut best_node = start_coord;
         let mut best_f = i64::MAX;
 
-        while let Some(Node { pos: current, .. }) = open_set.pop() {
-            if current == to {
-                best_node = (current, t);
+        while let Some(Node { coord: current, f_score: _ }) = open_set.pop() {
+            // If we reached the goal, reconstruct path immediately
+            if current.pos == to {
+                best_node = Coord { pos: to, tick: current.tick };
                 break;
             }
 
             // Keep track of the node that gets us closest to the goal if we can't reach it within window
-            let h = Vector3::manhattan_distance(&current, &to);
+            let h = Vector3::manhattan_distance(&current.pos, &to);
             if h < best_f {
                 best_f = h;
-                best_node = (current, t);
+                best_node = Coord { pos: current.pos, tick: current.tick };
             }
 
-            if t >= (self.tick + self.window as usize) {
-                // We've reached the end of our planning window, stop searching further
-                continue;
+            // We've reached the end of our planning window, stop searching further
+            if current.tick >= (self.tick + self.window as usize) {
+                break;
             }
 
             // Neighbors: 6 directions + wait
-            let mut neighbors = vec![
-                Vector3::new(current.x + 1, current.y, current.z),
-                Vector3::new(current.x - 1, current.y, current.z),
-                Vector3::new(current.x, current.y + 1, current.z),
-                Vector3::new(current.x, current.y - 1, current.z),
-                Vector3::new(current.x, current.y, current.z + 1),
-                Vector3::new(current.x, current.y, current.z - 1),
+            let neighbors = vec![
+                Vector3::new(current.pos.x + 1, current.pos.y, current.pos.z),
+                Vector3::new(current.pos.x - 1, current.pos.y, current.pos.z),
+                Vector3::new(current.pos.x, current.pos.y + 1, current.pos.z),
+                Vector3::new(current.pos.x, current.pos.y - 1, current.pos.z),
+                Vector3::new(current.pos.x, current.pos.y, current.pos.z + 1),
+                Vector3::new(current.pos.x, current.pos.y, current.pos.z - 1),
+                current.pos // Wait in place option
             ];
-            neighbors.push(current); // Wait move
 
             for neighbor in neighbors {
-                let next_t = t + 1;
+                let next_tick = current.tick + 1;
+                let next_coord = Coord { pos: neighbor, tick: next_tick };
 
                 // Static collision check (blocks)
-                if self.block_manager.get_block(neighbor.x, neighbor.y, neighbor.z).is_some() {
-                    continue;
+                if let Some(block) = self.block_manager.get_block(neighbor.x, neighbor.y, neighbor.z) {
+                    if block != "minecraft:air" {
+                        continue;
+                    }
                 }
 
                 // Dynamic collision check (ledger)
-                if self.reservations[next_t].nodes.contains_key(&neighbor) {
-                    continue;
+                if let Some(other_turtle) = self.reservations.get(&next_coord) {
+                    if *other_turtle != turtle_id {
+                        // Another turtle is already reserved here at this time
+                        continue;
+                    }
                 }
 
-                if self.reservations[t].edges.contains(&(neighbor, current)) {
-                    continue;
+                if let Some(other_turtle) = self.transitions.get(&(current.pos, neighbor, current.tick)) {
+                    if *other_turtle != turtle_id {
+                        // Another turtle is moving from current.pos to neighbor at the same time
+                        continue;
+                    }
+                }
+
+                if let Some(other_turtle) = self.transitions.get(&(neighbor, current.pos, current.tick)) {
+                    if *other_turtle != turtle_id {
+                        // Another turtle is moving from neighbor to current.pos at the same time
+                        continue;
+                    }
                 }
 
                 // Check g-scores
-                let current_g = g_score.get(&(current, t)).cloned().unwrap_or(i64::MAX);
+                let current_g = g_score.get(&current).cloned().unwrap_or(i64::MAX);
                 if current_g == i64::MAX { continue; } // Should not happen
 
-                let tentative_g_score = current_g + 1;
-                if tentative_g_score < *g_score.get(&(neighbor, next_t)).unwrap_or(&i64::MAX) {
-                    came_from.insert((neighbor, next_t), (current, t));
-                    g_score.insert((neighbor, next_t), tentative_g_score);
+                let tentative_g_score = if neighbor == current.pos { current_g + 1 } else { current_g + 2 }; // Waiting costs 1, moving costs 2 (to prefer waiting when possible)
+                if tentative_g_score < *g_score.get(&next_coord).unwrap_or(&i64::MAX) {
+                    came_from.insert(next_coord, current);
+                    g_score.insert(next_coord, tentative_g_score);
                     let f_score = tentative_g_score + Vector3::manhattan_distance(&neighbor, &to);
-                    open_set.push(Node { pos: neighbor, f_score });
+                    open_set.push(Node { coord: next_coord, f_score });
                 }
             }
         }
@@ -191,7 +201,7 @@ impl PathManager {
             path.push(curr);
             curr = prev;
         }
-        path.push((from, self.tick)); // Add the start node
+        path.push(Coord { pos: from, tick: start_tick }); // Add the start node
         path.reverse();
 
         if path.len() <= 1 && from != to {
@@ -201,12 +211,12 @@ impl PathManager {
         Some(path)
     }
 
-    fn static_path(&self, pos: Vector3) -> Vec<(Vector3, usize)> {
+    fn static_path(&self, pos: Vector3) -> Vec<Coord> {
         // Reserve the current spot up to window, used for stationary turtles that still need to be considered in pathfinding
         let mut dummy_path = Vec::new();
 
-        for i in self.tick..(self.tick + self.window as usize) {
-            dummy_path.push((pos, i));
+        for i in self.tick..=(self.tick + self.window as usize) {
+            dummy_path.push(Coord { pos, tick: i });
         }
 
         dummy_path
@@ -225,24 +235,45 @@ impl PathManager {
         // This should be called after every turtle has reserved its path for the current window
         // it will path every turtle to their goal given within this plan
         let mut results = HashMap::new();
+        let mut paths = HashMap::new();
 
         while results.len() < self.goals.len() {
-            // Clear ledger for every iteration to ensure fresh reservations for every step
-            self.advance_tick();
+            // Reset state for this step of planning
             self.reservations.clear();
+            self.transitions.clear();
+            paths.clear();
+            
+            // Check for existence and goal completion
+            let all_turtle_ids = self.turtle_manager.iter_ids().await;
+            let ids_in_goals: Vec<u64> = self.goals.keys().cloned().collect();
 
-            for _ in 0..self.window {
-                self.reservations.push(TimeSlice::new());
+            for turtle_id in ids_in_goals {
+                if results.contains_key(&turtle_id) { continue; }
+
+                if let Some(turtle) = self.turtle_manager.get_turtle(turtle_id).await {
+                    let turtle = turtle.lock().await;
+                    let current_pos = Vector3::from(turtle.get_position());
+                    if let Some(goal) = self.goals.get(&turtle_id) {
+                        if current_pos == *goal {
+                            results.insert(turtle_id, Ok(()));
+                        }
+                    }
+                } else {
+                    results.insert(turtle_id, Err("Couldn't acquire turtle.".to_string()));
+                }
             }
 
-            // First, pre-reserve all turtles' current positions at tick to handle initial swap checks
-            let all_turtle_ids = self.turtle_manager.iter_ids().await;
+            if results.len() >= self.goals.len() {
+                break;
+            }
 
+            // Pre-reserve all turtles' current positions
             for turtle_id in &all_turtle_ids {
                 if let Some(turtle) = self.turtle_manager.get_turtle(*turtle_id).await {
                     let turtle = turtle.lock().await;
                     let current_pos = Vector3::from(turtle.get_position());
-                    self.reserve(*turtle_id, vec![(current_pos, self.tick)]);
+                    let path = vec![Coord { pos: current_pos, tick: self.tick }, Coord { pos: current_pos, tick: self.tick + 1 }];
+                    self.reserve(*turtle_id, path);
                 }
             }
 
@@ -260,61 +291,47 @@ impl PathManager {
             }
             
             // For every turtle in this plan, get a reservation for its path to the goal
-            let ids_and_goals = self.goals.iter().map(|(id, goal)| (*id, *goal)).collect::<Vec<_>>();
+            let ids_and_goals = self.goals.iter()
+                .filter(|(id, _)| !results.contains_key(id))
+                .map(|(id, goal)| (*id, *goal))
+                .collect::<Vec<_>>();
 
             for (turtle_id, goal) in ids_and_goals {
-                // Skip if turtle already has a result
-                if results.contains_key(&turtle_id) {
-                    continue;
-                }
-
-                // Get the path reserved
                 if let Some(turtle) = self.turtle_manager.get_turtle(turtle_id).await {
                     let turtle = turtle.lock().await;
                     let current_pos = Vector3::from(turtle.get_position());
 
-                    if let Some(path) = self.dynamic_path(current_pos, goal) {
-                        self.reserve(turtle_id, path);
+                    if let Some(path) = self.dynamic_path(turtle_id, current_pos, goal) {
+                        if self.reserve(turtle_id, path.clone()) {
+                            paths.insert(turtle_id, path);
+                        }
                     } else {
                         // The reservation couldnt be made, therefore the path probably doesn't exist.
                         results.insert(turtle_id, Err("No path.".to_string()));
                     }
-                } else {
-                    // Turtle disappeared, maybe it got destroyed or something, just ignore it for this window
-                    results.insert(turtle_id, Err("Couldn't acquire turtle.".to_string()));
                 }
             }
 
             // Loop for every reservation and execute the first step
-            let ids_and_next_positions = self.get_slice(self.tick + 1).nodes.iter().map(|(pos, id)| (*id, *pos)).collect::<Vec<_>>();
-
-            for (turtle_id, next) in ids_and_next_positions {
-                // Check if this is the goal
-                if let Some(goal) = self.goals.get(&turtle_id) {
-                    if next == *goal {
-                        results.insert(turtle_id, Ok(()));
-                        continue;
-                    }
-                }
-
+            for (turtle_id, path) in &paths {
                 // Acquire turtle control
-                if let Some(turtle) = self.turtle_manager.get_turtle(turtle_id).await {
+                if let Some(turtle) = self.turtle_manager.get_turtle(*turtle_id).await {
                     let mut turtle = turtle.lock().await;
-                    let delta = Vector3::from(next) - Vector3::from(turtle.get_position());
+                    let current_pos = Vector3::from(turtle.get_position());
+                    let delta = path[1].pos - current_pos;
                     
-                    match turtle.move_to(delta.x, delta.y, delta.z).await {
-                        Ok(()) => {}, // Success, do nothing and wait for next loop to move the next block
-                        Err(_) => {
-                            // Error occured, but this isnt the end. Scan all the blocks and wait for next iteration
-                            let _ = turtle.scan_blocks().await;
+                    if delta.x != 0 || delta.y != 0 || delta.z != 0 {
+                        match turtle.move_to(delta.x, delta.y, delta.z).await {
+                            Ok(()) => {}, // Success
+                            Err(_) => {
+                                // Error occured, scan blocks and try again next iteration
+                                let _ = turtle.scan_blocks().await;
+                            }
                         }
                     }
 
                     // ! Pause a bit just to debug
-                    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-                } else {
-                    // Turtle disappeared, maybe it got destroyed or something, just ignore it for this window
-                    results.insert(turtle_id, Err("Couldn't acquire turtle.".to_string()));
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 }
             }
         }
@@ -349,18 +366,18 @@ mod tests {
         let to = Vector3::new(2, 0, 0);
         
         pl.set_window(10);
-        let path = pl.dynamic_path(from, to).expect("Should find path");
+        let path = pl.dynamic_path(1, from, to).expect("Should find path");
         
         assert!(!path.is_empty());
-        assert_eq!(path[0].1, 0);
-        assert_eq!(path[0].0.x, 0);
-        assert_eq!(path.last().unwrap().0.x, 2);
-        assert_eq!(path.last().unwrap().0.y, 0);
-        assert_eq!(path.last().unwrap().0.z, 0);
+        assert_eq!(path[0].tick, 0);
+        assert_eq!(path[0].pos.x, 0);
+        assert_eq!(path.last().unwrap().pos.x, 2);
+        assert_eq!(path.last().unwrap().pos.y, 0);
+        assert_eq!(path.last().unwrap().pos.z, 0);
         
         // Check that path is sequential in time starting from 0
         for i in 0..path.len() {
-            assert_eq!(path[i].1, i);
+            assert_eq!(path[i].tick, i);
         }
     }
 
@@ -374,14 +391,14 @@ mod tests {
         bm.update_block(1, 0, 0, "stone".to_string()).await;
         
         pl.set_window(10);
-        let path = pl.dynamic_path(from, to).expect("Should find path");
+        let path = pl.dynamic_path(1, from, to).expect("Should find path");
         
         // Should not contain (1, 0, 0)
         for coord in &path {
-            assert!(coord.0.x != 1 || coord.0.y != 0 || coord.0.z != 0);
+            assert!(coord.pos.x != 1 || coord.pos.y != 0 || coord.pos.z != 0);
         }
         
-        assert_eq!(path.last().unwrap().0.x, 2);
+        assert_eq!(path.last().unwrap().pos.x, 2);
     }
 
     #[tokio::test]
@@ -393,22 +410,20 @@ mod tests {
         // Turtle 1 reserves a path that goes through (1, 0, 0) at t=1
         let t1_from = Vector3::new(0, 0, 0);
         let t1_to = Vector3::new(2, 0, 0);
-        let reserved1 = pl.dynamic_path(1, t1_from, t1_to).expect("T1 should find path");
+        let path1 = pl.dynamic_path(1, t1_from, t1_to).expect("T1 should find path");
+        pl.reserve(1, path1.clone());
         
         // Turtle 2 tries to reserve a path that would normally go through (1, 0, 0) at t=1
         // (e.g., from (1, 1, 0) to (1, -1, 0))
         let t2_from = Vector3::new(1, 1, 0);
         let t2_to = Vector3::new(1, -1, 0);
-        let reserved2 = pl.dynamic_path(2, t2_from, t2_to).expect("T2 should find path");
-        
-        let path1 = reserved1.get_path();
-        let path2 = reserved2.get_path();
+        let path2 = pl.dynamic_path(2, t2_from, t2_to).expect("T2 should find path");
         
         // Verify no collisions in space-time
-        for c1 in path1 {
-            for c2 in path2 {
-                if c1.t == c2.t {
-                    assert!(c1.x != c2.x || c1.y != c2.y || c1.z != c2.z, "Collision at t={}", c1.t);
+        for c1 in &path1 {
+            for c2 in &path2 {
+                if c1.tick == c2.tick {
+                    assert!(c1.pos.x != c2.pos.x || c1.pos.y != c2.pos.y || c1.pos.z != c2.pos.z, "Collision at t={}", c1.tick);
                 }
             }
         }
@@ -423,44 +438,19 @@ mod tests {
         // Turtle 1 goes (0,0,0) -> (1,0,0)
         let t1_from = Vector3::new(0, 0, 0);
         let t1_to = Vector3::new(1, 0, 0);
-        let _reserved1 = pl.dynamic_path(1, t1_from, t1_to).expect("T1 path");
+        let path1 = pl.dynamic_path(1, t1_from, t1_to).expect("T1 path");
+        pl.reserve(1, path1);
         
         // Turtle 2 tries to go (1,0,0) -> (0,0,0) at the same time
         let t2_from = Vector3::new(1, 0, 0);
         let t2_to = Vector3::new(0, 0, 0);
-        let reserved2 = pl.dynamic_path(2, t2_from, t2_to).expect("T2 path");
+        let path2 = pl.dynamic_path(2, t2_from, t2_to).expect("T2 path");
         
         // T2 should HAVE to wait or go around, but not swap directly
-        // If it goes around, path length will be > 1
-        // If it waits, it might take longer.
-        let path2 = reserved2.get_path();
-        
         // At t=1, T1 is at (1,0,0). So T2 cannot be at (0,0,0) at t=1 if it means swapping
         // Let's verify T2 path at t=1 isn't (0,0,0)
-        let t1_coord = path2.iter().find(|c| c.t == 1).expect("T2 should have a position at t=1");
-        assert!(t1_coord.x != 0 || t1_coord.y != 0 || t1_coord.z != 0, "Swap collision detected at t=1");
-    }
-
-    #[tokio::test]
-    async fn test_reservation_cleanup() {
-        let (_bm, mut pl) = setup("test_reservation_cleanup").await;
-        let from = Vector3::new(0, 0, 0);
-        let to = Vector3::new(1, 0, 0);
-        
-        pl.set_window(10);
-
-        let coord_at_t0 = Coord { x: 0, y: 0, z: 0, t: 0 };
-        let coord_at_t1 = Coord { x: 1, y: 0, z: 0, t: 1 };
-        
-        {
-            let _reserved = pl.dynamic_path(1, from, to).expect("Path");
-            assert!(pl.ledger.contains_key(&coord_at_t0));
-            assert!(pl.ledger.contains_key(&coord_at_t1));
-        }
-        
-        // After drop, ledger should be empty
-        assert!(!pl.ledger.contains_key(&coord_at_t0));
-        assert!(!pl.ledger.contains_key(&coord_at_t1));
+        let t1_coord = path2.iter().find(|c| c.tick == 1).expect("T2 should have a position at t=1");
+        assert!(t1_coord.pos.x != 0 || t1_coord.pos.y != 0 || t1_coord.pos.z != 0, "Swap collision detected at t=1");
     }
 
     #[tokio::test]
@@ -471,15 +461,14 @@ mod tests {
         let window = 3;
         
         pl.set_window(window);
-        let reserved = pl.dynamic_path(1, from, to).expect("Path");
-        let path = reserved.get_path();
+        let path = pl.dynamic_path(1, from, to).expect("Path");
         
         // Path length is window + 1 (including t=0)
         assert!(path.len() <= (window + 1) as usize);
-        assert!(path.last().unwrap().t <= window as u64);
+        assert!(path.last().unwrap().tick <= window as usize);
         
         // Should not have reached the goal (10, 0, 0)
-        assert!(path.last().unwrap().x < 10);
+        assert!(path.last().unwrap().pos.x < 10);
     }
 
     #[tokio::test]
@@ -510,91 +499,70 @@ mod tests {
         // Turtle 1: (-2,0,0) -> (2,0,0)
         let from1 = Vector3::new(-2, 0, 0);
         let to1 = Vector3::new(2, 0, 0);
-        let reserved1 = pl.dynamic_path(1, from1, to1).expect("Path 1 should be found");
-        let path1 = reserved1.get_path();
+        let path1 = pl.dynamic_path(1, from1, to1).expect("Path 1 should be found");
+        pl.reserve(1, path1.clone());
         
         // Turtle 2: (0,-2,0) -> (0,2,0) (perpendicular path)
         let from2 = Vector3::new(0, -2, 0);
         let to2 = Vector3::new(0, 2, 0);
-        let reserved2 = pl.dynamic_path(2, from2, to2).expect("Path 2 should be found");
-        let path2 = reserved2.get_path();
+        let path2 = pl.dynamic_path(2, from2, to2).expect("Path 2 should be found");
         
         // Verify both paths were found
         assert!(!path1.is_empty());
         assert!(!path2.is_empty());
         
         // Check that paths don't collide at the same time
-        for coord1 in path1 {
-            for coord2 in path2 {
-                if coord1.t == coord2.t {
+        for coord1 in &path1 {
+            for coord2 in &path2 {
+                if coord1.tick == coord2.tick {
                     // At the same time step, turtles should not occupy the same position
-                    assert!(coord1.x != coord2.x || coord1.y != coord2.y || coord1.z != coord2.z,
+                    assert!(coord1.pos.x != coord2.pos.x || coord1.pos.y != coord2.pos.y || coord1.pos.z != coord2.pos.z,
                         "Paths collide at position ({}, {}, {}) at time {}", 
-                        coord1.x, coord1.y, coord1.z, coord1.t);
+                        coord1.pos.x, coord1.pos.y, coord1.pos.z, coord1.tick);
                 }
             }
         }
     }
 
     #[tokio::test]
-    async fn test_coord_vector_conversions() {
-        let v = Vector3::new(1, 2, 3);
-        let t = 10;
-        let c = Coord::from((v, t));
-        
-        assert_eq!(c.x, 1);
-        assert_eq!(c.y, 2);
-        assert_eq!(c.z, 3);
-        assert_eq!(c.t, 10);
-        
-        let v2: Vector3 = c.into();
-        assert_eq!(v2.x, 1);
-        assert_eq!(v2.y, 2);
-        assert_eq!(v2.z, 3);
-    }
-
-    #[tokio::test]
     async fn test_stationary_turtle_reservation() {
-        let (_bm, pl) = setup("test_stationary_turtle_reservation").await;
+        let (_bm, mut pl) = setup("test_stationary_turtle_reservation").await;
         let pos = Vector3::new(5, 5, 5);
         let turtle_id = 42;
         
-        {
-            let _reserved = pl.static_path(turtle_id, pos);
-            
-            // Check if all coords in window are reserved
-            for t in 0..pl.window {
-                let coord = Coord { x: 5, y: 5, z: 5, t };
-                assert_eq!(*pl.ledger.get(&coord).unwrap(), turtle_id);
-            }
-        }
+        let path = pl.static_path(pos);
+        pl.reserve(turtle_id, path);
         
-        // Ledger should be empty after ReservedPath is dropped
-        assert!(pl.ledger.is_empty());
+        // Check if all coords in window are reserved
+        for t in 0..=pl.window as usize {
+            let coord = Coord { pos, tick: pl.tick + t };
+            assert!(pl.reservations.contains_key(&coord), "Stationary turtle not reserved at tick {}", coord.tick);
+            assert_eq!(pl.reservations.get(&coord).unwrap(), &turtle_id, "Wrong turtle reserved at tick {}", coord.tick);
+        }
     }
 
     #[tokio::test]
     async fn test_stationary_turtle_blocks_path() {
-        let (_bm, pl) = setup("test_stationary_turtle_blocks_path").await;
+        let (_bm, mut pl) = setup("test_stationary_turtle_blocks_path").await;
         
         let stationary_pos = Vector3::new(1, 0, 0);
-        let _stationary_res = pl.static_path(2, stationary_pos);
+        let stat_path = pl.static_path(stationary_pos);
+        pl.reserve(2, stat_path);
         
         let from = Vector3::new(0, 0, 0);
         let to = Vector3::new(2, 0, 0);
-        
+
         // T1 should avoid (1,0,0) because T2 is stationary there
-        let reserved1 = pl.dynamic_path(1, from, to).expect("Should find path");
-        let path1 = reserved1.get_path();
+        let path1 = pl.dynamic_path(1, from, to).expect("Should find path");
         
         for coord in path1 {
-            assert!(coord.x != 1 || coord.y != 0 || coord.z != 0, "T1 hit stationary T2 at t={}", coord.t);
+            assert!(coord.pos.x != 1 || coord.pos.y != 0 || coord.pos.z != 0, "T1 hit stationary T2 at t={}", coord.tick);
         }
     }
 
     #[tokio::test]
     async fn test_set_goal() {
-        let (_bm, pl) = setup("test_set_goal").await;
+        let (_bm, mut pl) = setup("test_set_goal").await;
         let turtle_id = 1;
         let goal = Vector3::new(10, 20, 30);
         
@@ -608,7 +576,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_no_turtles() {
-        let (_bm, pl) = setup("test_execute_no_turtles").await;
+        let (_bm, mut pl) = setup("test_execute_no_turtles").await;
         
         pl.set_goal(1, Vector3::new(1, 0, 0));
         pl.set_goal(2, Vector3::new(0, 1, 0));
@@ -624,29 +592,6 @@ mod tests {
         assert!(pl.goals.is_empty());
     }
 
-    #[test]
-    fn test_node_ordering() {
-        let n1 = Node { pos: Vector3::new(0,0,0), t: 0, f_score: 10 };
-        let n2 = Node { pos: Vector3::new(0,0,0), t: 1, f_score: 5 };
-        let n3 = Node { pos: Vector3::new(0,0,0), t: 2, f_score: 10 };
-        
-        let mut heap = BinaryHeap::new();
-        heap.push(n1);
-        heap.push(n2);
-        heap.push(n3);
-        
-        // Lower f_score should come first
-        assert_eq!(heap.pop().unwrap().f_score, 5);
-        
-        let first = heap.pop().unwrap();
-        assert_eq!(first.f_score, 10);
-        assert_eq!(first.t, 2);
-        
-        let second = heap.pop().unwrap();
-        assert_eq!(second.f_score, 10);
-        assert_eq!(second.t, 0);
-    }
-
     #[tokio::test]
     async fn test_intersection_collision() {
         let (_bm, mut pl) = setup("test_intersection_collision").await;
@@ -658,21 +603,21 @@ mod tests {
         let t1_id = 1;
         let t1_pos = Vector3::new(1, 0, 0);
         
-        let t2_id = 2;
         let t2_from = Vector3::new(0, 0, 0);
         let t2_to = Vector3::new(2, 0, 0);
 
         // In the real execute loop, T1 would be in 'results' or not in 'goals', 
         // and thus reserved as stationary.
-        let _res1 = pl.static_path(t1_id, t1_pos);
+        let stat_path = pl.static_path(t1_pos);
+        pl.reserve(t1_id, stat_path);
         
         // T2 plans its path
-        let res2 = pl.dynamic_path(t2_id, t2_from, t2_to).expect("T2 should find a path");
-        let path2 = res2.get_path();
+        let path2 = pl.dynamic_path(2, t2_from, t2_to).expect("T2 should find a path");
+
         
         // T2 should NOT go through (1,0,0) at any time because T1 is there.
         for coord in path2 {
-            assert!(coord.x != 1 || coord.y != 0 || coord.z != 0, "T2 collided with stationary T1 at t={}", coord.t);
+            assert!(coord.pos.x != 1 || coord.pos.y != 0 || coord.pos.z != 0, "T2 collided with stationary T1 at t={}", coord.tick);
         }
     }
 
@@ -685,25 +630,26 @@ mod tests {
         // They want to swap.
         
         // Simulating the execute loop's pre-reservation:
-        pl.ledger.insert(Coord { x: 0, y: 0, z: 0, t: 0 }, 1);
-        pl.ledger.insert(Coord { x: 1, y: 0, z: 0, t: 0 }, 2);
+        let p1 = vec![Coord { pos: Vector3::new(0,0,0), tick: 0 }];
+        let p2 = vec![Coord { pos: Vector3::new(1,0,0), tick: 0 }];
+        pl.reserve(1, p1);
+        pl.reserve(2, p2);
         
         // T1 plans first (0,0,0 -> 1,0,0)
-        let res1 = pl.dynamic_path(1, Vector3::new(0,0,0), Vector3::new(1,0,0)).expect("T1 path");
-        let path1 = res1.get_path();
-        
+        let path1 = pl.dynamic_path(1, Vector3::new(0,0,0), Vector3::new(1,0,0)).expect("T1 path");
+        pl.reserve(1, path1.clone());
+
         // T2 plans second (1,0,0 -> 0,0,0)
-        let res2 = pl.dynamic_path(2, Vector3::new(1,0,0), Vector3::new(0,0,0)).expect("T2 path");
-        let path2 = res2.get_path();
-        
+        let path2 = pl.dynamic_path(2, Vector3::new(1,0,0), Vector3::new(0,0,0)).expect("T2 path");
+
         // Check for swap at t=1
         // T1: (0,0,0, t=0) -> (1,0,0, t=1)
         // T2: (1,0,0, t=0) -> (0,0,0, t=1)  <-- This should be blocked by swap check
         
-        let t1_pos_at_1 = path1.iter().find(|c| c.t == 1).unwrap();
-        let t2_pos_at_1 = path2.iter().find(|c| c.t == 1).unwrap();
+        let t1_pos_at_1 = path1.iter().find(|c| c.tick == 1).unwrap();
+        let t2_pos_at_1 = path2.iter().find(|c| c.tick == 1).unwrap();
         
         // One of them must have waited or moved elsewhere
-        assert!(!(t1_pos_at_1.x == 1 && t2_pos_at_1.x == 0), "Swap collision detected at t=1");
+        assert!(!(t1_pos_at_1.pos.x == 1 && t2_pos_at_1.pos.x == 0), "Swap collision detected at t=1");
     }
 }

@@ -15,6 +15,9 @@ There will be a job queue and a task pool. A turtle at IDLE will consume a job, 
 The turtle marks each task as complete and the server will mark each job as complete if every task is finished.
 Each task is just what I call an ActionStack, or a list of actual actions to take with the turtle.
 
+## Problems:
+Fresh turtle setup is a little rough, needs help fuelling and such
+
 ## Goals:
 1. [x] Setup server communications, registering/dropping clients
 2. [x] Setup database memory system
@@ -22,7 +25,7 @@ Each task is just what I call an ActionStack, or a list of actual actions to tak
 4. [x] Create dead-reckoning system for turtles
 5. [x] Create virtual turtle remote control for testing
 6. [x] Create pathfinding endpoint for clients to query
-7. [ ] Implement multi-turtle pathfinding at the same time
+7. [x] Implement multi-turtle pathfinding at the same time
 8. [ ] Implement state machine to handle complex logic
     - Building: Builds some sort of 3d model or schematic
     - Mining: Clears the entire area selected

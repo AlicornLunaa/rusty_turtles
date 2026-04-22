@@ -1,5 +1,7 @@
 use std::{cmp::Ordering, collections::{BinaryHeap, HashMap}};
 
+use rustc_hash::FxHashMap;
+
 use crate::turtle::traits::SmartTurtle;
 use crate::{managers::{block_manager::BlockManager, turtle_manager::TurtleManager}, util::vector::Vector3};
 
@@ -10,8 +12,8 @@ pub struct Coord {
     pub tick: usize,
 }
 
-type ReservationMap = HashMap<Coord, u64>;
-type TransitionMap = HashMap<(Vector3, Vector3, usize), u64>;
+type ReservationMap = FxHashMap<Coord, u64>;
+type TransitionMap = FxHashMap<(Vector3, Vector3, usize), u64>;
 
 /// A* stuff
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -36,7 +38,7 @@ impl PartialOrd for Node {
 pub struct PathManager {
     turtle_manager: TurtleManager,
     block_manager: BlockManager,
-    goals: HashMap<u64, Vector3>,
+    goals: FxHashMap<u64, Vector3>,
     reservations: ReservationMap,
     transitions: TransitionMap,
     window: u64,
@@ -48,9 +50,9 @@ impl PathManager {
         Self {
             turtle_manager,
             block_manager,
-            goals: HashMap::new(),
-            reservations: HashMap::new(),
-            transitions: HashMap::new(),
+            goals: FxHashMap::default(),
+            reservations: FxHashMap::default(),
+            transitions: FxHashMap::default(),
             window: 32,
             tick: 0,
         }
@@ -102,9 +104,10 @@ impl PathManager {
     fn dynamic_path(&self, turtle_id: u64, from: Vector3, to: Vector3) -> Option<Vec<Coord>> {
         // A* solving for a path from 'from' to 'to' while avoiding static blocks and dynamic reservations in the ledger
         let mut open_set = BinaryHeap::new();
-        let mut came_from: HashMap<Coord, Coord> = HashMap::new();
-        let mut g_score: HashMap<Coord, i64> = HashMap::new();
+        let mut came_from: FxHashMap<Coord, Coord> = FxHashMap::default();
+        let mut g_score: FxHashMap<Coord, i64> = FxHashMap::default();
 
+        let now = chrono::Utc::now().timestamp();
         let start_tick = self.tick;
         let start_coord = Coord { pos: from, tick: start_tick };
         
@@ -156,7 +159,7 @@ impl PathManager {
                 // Static collision check (blocks)
                 if let Some(block) = self.block_manager.get_block(neighbor.x, neighbor.y, neighbor.z) {
                     // Block must not be air and have been updated within the last 5 minutes
-                    let five_minutes_ago = chrono::Utc::now().timestamp() - 300;
+                    let five_minutes_ago = now - 300;
 
                     if block.block_type == "minecraft:air" {
                         // We know this path is clear, it should be prioritized a little
@@ -164,7 +167,7 @@ impl PathManager {
                     }
 
                     // If the block was updated more than 5 minutes ago, consider it unknown to allow for natural terrain changes, but still prefer known paths
-                    last_updated = (chrono::Utc::now().timestamp() - block.last_updated) / 60; // The older the block, the less we trust it, up to a maximum of 5 minutes where we consider it completely unknown
+                    last_updated = (now - block.last_updated) / 60; // The older the block, the less we trust it, up to a maximum of 5 minutes where we consider it completely unknown
 
                     if block.block_type != "minecraft:air" && block.last_updated >= five_minutes_ago {
                         continue;
@@ -350,7 +353,10 @@ impl PathManager {
                     
                     if delta.x != 0 || delta.y != 0 || delta.z != 0 {
                         match turtle.move_to(delta.x, delta.y, delta.z).await {
-                            Ok(()) => {}, // Success
+                            Ok(()) => {
+                                // Success, lets just gather information just because
+                                let _ = turtle.scan_blocks().await;
+                            }, 
                             Err(_) => {
                                 // Error occured, scan blocks and try again next iteration
                                 let _ = turtle.scan_blocks().await;

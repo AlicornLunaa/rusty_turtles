@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::env;
 use futures_util::StreamExt;
+use rustc_hash::FxHashMap;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
@@ -49,20 +50,48 @@ async fn main() {
     // Testing loop
     tokio::spawn({
         let turtle_manager = turtle_manager.clone();
+        let mut goals = FxHashMap::default();
         
         async move {
             // Spawn a thread which every 10 seconds spawns a thread to communicate with turtles
             loop {
                 let turtles_to_remove = Arc::new(Mutex::new(HashSet::new()));
 
+                // Create goals for every turtle, just some random coordinates around the center of the world for now
+                let center = Vector3::new(-12, 56, -1);
+
+                for turtle_id in turtle_manager.iter_ids().await {
+                    if goals.contains_key(&turtle_id) {
+                        continue;
+                    }
+
+                    let mut offset1 = Vector3::new(rand::random::<i64>() % 10 - 5, 0, rand::random::<i64>() % 10 - 5);
+                    let mut offset2 = Vector3::new(rand::random::<i64>() % 10 - 5, 0, rand::random::<i64>() % 10 - 5);
+
+                    // Check for overlapping goals and adjust if necessary by moving it a bit further out in the same direction until it's not overlapping anymore
+                    while goals.values().any(|&(goal1, goal2)| center + offset1 == goal1 || center + offset1 == goal2) {
+                        let direction = offset1.normalize();
+                        offset1 = offset1 + direction * 2;
+                    }
+
+                    while goals.values().any(|&(goal1, goal2)| center + offset2 == goal1 || center + offset2 == goal2) {
+                        let direction = offset2.normalize();
+                        offset2 = offset2 + direction * 2;
+                    }
+
+                    goals.insert(turtle_id, (center + offset1, center + offset2));
+                }
+
                 // Start a future action
-                planner.set_goal(0, Vector3::new(-12, 56, -4));
-                planner.set_goal(1, Vector3::new(-8, 56, -1));
-                planner.set_goal(2, Vector3::new(-6, 56, -7));
+                for (turtle_id, (goal1, _)) in goals.iter() {
+                    println!("Setting goal for turtle {turtle_id} to {goal1:?}");
+                    planner.set_goal(*turtle_id, *goal1);
+                }
                 planner.execute().await;
-                planner.set_goal(0, Vector3::new(-12, 56, 3));
-                planner.set_goal(1, Vector3::new(-19, 56, -1));
-                planner.set_goal(2, Vector3::new(-18, 56, 4));
+                for (turtle_id, (_, goal2)) in goals.iter() {
+                    println!("Setting goal for turtle {turtle_id} to {goal2:?}");
+                    planner.set_goal(*turtle_id, *goal2);
+                }
                 let results = planner.execute().await;
 
                 for (i, result) in results.iter().enumerate() {
@@ -89,6 +118,7 @@ async fn main() {
                     for i in turtles_to_remove.iter() {
                         println!("Removing turtle {i}");
                         turtle_manager.remove_turtle(*i).await;
+                        goals.remove(i);
                     }
         
                     turtles_to_remove.clear();

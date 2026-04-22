@@ -78,6 +78,20 @@ impl Vector3 {
         let sqr = ((self.x * self.x) + (self.y * self.y) + (self.z * self.z)) as f64;
         sqr.sqrt()
     }
+
+    pub fn normalize(&self) -> Self {
+        let len = self.length();
+        
+        if len == 0.0 {
+            Self { x: 0, y: 0, z: 0 }
+        } else {
+            Self {
+                x: (self.x as f64 / len).round() as i64,
+                y: (self.y as f64 / len).round() as i64,
+                z: (self.z as f64 / len).round() as i64,
+            }
+        }
+    }
 }
 
 impl From<(i64, i64, i64)> for Vector3 {

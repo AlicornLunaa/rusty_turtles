@@ -173,7 +173,7 @@ impl PathManager {
 
                     // If the block was updated more than 5 minutes ago, consider it unknown to allow for natural terrain changes, but still prefer known paths
                     last_updated = (now - block.last_updated) / 60; // The older the block, the less we trust it, up to a maximum of 5 minutes where we consider it completely unknown
-
+                    
                     if !turtle_in_way && block.block_type != "minecraft:air" && block.last_updated >= five_minutes_ago {
                         continue;
                     }

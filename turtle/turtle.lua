@@ -1,4 +1,4 @@
-local version = 2
+local version = 4
 
 -- This is a simple dumb terminal program for the turtle.
 -- It is intended to be the part of the program which executes commands
@@ -320,6 +320,7 @@ local query_table = {
             local success = turtle.forward()
             while not success do
                 sleep(0.5)
+                turtle.turnLeft()
                 success = turtle.forward()
             end
 
@@ -509,3 +510,6 @@ function main()
 end
 
 main()
+print("Rebooting...")
+sleep(5)
+os.reboot()

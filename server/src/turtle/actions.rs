@@ -43,6 +43,7 @@ pub enum TurtleAction {
     EquipRight,
 
     // Misc
+    ChangeName{name: String},
     Craft{limit: Option<u8>},
     Quit,
     Wait,

@@ -1,4 +1,4 @@
-local version = 3
+local version = 4
 
 -- This is a simple dumb terminal program for the turtle.
 -- It is intended to be the part of the program which executes commands
@@ -140,6 +140,10 @@ local action_table = {
     end,
 
     -- Custom
+    ["ChangeName"] = function(args)
+        os.setComputerLabel(args["name"])
+        return { success = true }
+    end,
     ["Wait"] = function(args)
         sleep(0.6)
     end,

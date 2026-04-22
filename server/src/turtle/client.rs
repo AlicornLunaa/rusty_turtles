@@ -5,7 +5,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::{sync::{Mutex, mpsc, oneshot}, task::JoinHandle};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::{gateway::{ServerAction, ServerMessage}, turtle::{TurtleAction, queries::{TurtleInit, TurtleQuery}, types::*}, util::script};
+use crate::{gateway::{ServerAction, ServerMessage}, turtle::{TurtleAction, queries::{TurtleInit, TurtleQuery}, types::*}, util::{name_generator::generate_random_name, script}};
 
 /// A struct representing a turtle
 pub struct Turtle {
@@ -173,14 +173,17 @@ impl Turtle {
         let (x, y, z, direction) = Self::initial_handshake(turtle_tx.clone()).await?;
         
         // Return the turtle object which has the sender object too
-        Ok(Self {
+        let mut turtle = Turtle {
             id,
             turtle_write_stream: turtle_tx,
             gateway_write_stream: server_tx,
             join_handle: handle,
             x, y, z, direction,
             valid
-        })
+        };
+        let _ = turtle.execute(TurtleAction::ChangeName { name: generate_random_name() }).await;
+
+        Ok(turtle)
     }
 
     // Turtle getters

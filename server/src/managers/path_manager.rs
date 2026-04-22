@@ -153,6 +153,7 @@ impl PathManager {
             for neighbor in neighbors {
                 let next_tick = current.tick + 1;
                 let next_coord = Coord { pos: neighbor, tick: next_tick };
+                let mut turtle_in_way = false;
                 let mut unknown_path = true;
                 let mut last_updated = 0;
 
@@ -160,6 +161,10 @@ impl PathManager {
                 if let Some(block) = self.block_manager.get_block(neighbor.x, neighbor.y, neighbor.z) {
                     // Block must not be air and have been updated within the last 5 minutes
                     let five_minutes_ago = now - 300;
+
+                    if block.block_type == "computercraft:turtle" || block.block_type == "computercraft:turtle_advanced" {
+                        turtle_in_way = true;
+                    }
 
                     if block.block_type == "minecraft:air" {
                         // We know this path is clear, it should be prioritized a little
@@ -169,7 +174,7 @@ impl PathManager {
                     // If the block was updated more than 5 minutes ago, consider it unknown to allow for natural terrain changes, but still prefer known paths
                     last_updated = (now - block.last_updated) / 60; // The older the block, the less we trust it, up to a maximum of 5 minutes where we consider it completely unknown
 
-                    if block.block_type != "minecraft:air" && block.last_updated >= five_minutes_ago {
+                    if !turtle_in_way && block.block_type != "minecraft:air" && block.last_updated >= five_minutes_ago {
                         continue;
                     }
                 }
@@ -332,7 +337,7 @@ impl PathManager {
                         paths.insert(turtle_id, path);
                     }
                 } else {
-                    // The reservation couldnt be made, therefore the path probably doesn't exist.
+                    // The reservation couldnt be made.
                     results.insert(turtle_id, Err("No path.".to_string()));
                 }
             }

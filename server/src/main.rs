@@ -91,7 +91,13 @@ async fn main() {
                     planner.set_goal(turtle_id, goal);
                     index += 1;
                 }
-                planner.execute().await;
+                let results = planner.execute().await;
+                for (i, result) in results.iter().enumerate() {
+                    println!("Turtle {i} path: {result:?}");
+                }
+                if !results.is_empty() { 
+                    println!();
+                }
                 // Face them all north
                 for turtle in turtle_manager.iter_turtles().await {
                     let mut turtle_lock = turtle.lock().await;

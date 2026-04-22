@@ -181,4 +181,22 @@ impl SmartTurtle for Turtle {
             Err(TurtleError::VirtualError(result.reason.unwrap_or("Cannot move to coordinates.".to_string())))
         }
     }
+
+    async fn face(&mut self, direction: Direction) -> Result<(), TurtleError> {
+        let delta = match direction {
+            Direction::NORTH => (0, -1),
+            Direction::EAST => (1, 0),
+            Direction::SOUTH => (0, 1),
+            Direction::WEST => (-1, 0),
+        };
+
+        let (sequence, _) = Turtle::create_face_commands(self.get_direction(), delta.0, delta.1);
+        let result = self.execute_batch(sequence).await?;
+
+        if result.success {
+            Ok(())
+        } else {
+            Err(TurtleError::VirtualError(result.reason.unwrap_or("Cannot face direction.".to_string())))
+        }
+    }
 }

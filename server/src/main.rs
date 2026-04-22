@@ -12,7 +12,7 @@ use crate::managers::block_manager::BlockManager;
 use crate::managers::client_manager::ClientManager;
 use crate::managers::path_manager::PathManager;
 use crate::managers::turtle_manager::TurtleManager;
-use crate::turtle::Turtle;
+use crate::turtle::{Direction, SmartTurtle, Turtle};
 use crate::util::vector::Vector3;
 
 mod managers;
@@ -82,6 +82,23 @@ async fn main() {
                     goals.insert(turtle_id, (center + offset1, center + offset2));
                 }
 
+                // Move every turtle into a square for a start
+                planner.set_window(16);
+                let mut index = 0;
+                for turtle_id in turtle_manager.iter_ids().await {
+                    let goal = Vector3::new(-31 + (index % 5) * 2, 56, center.z + (index / 5) * 2);
+                    println!("Setting initial goal for turtle {turtle_id} to {goal:?}");
+                    planner.set_goal(turtle_id, goal);
+                    index += 1;
+                }
+                planner.execute().await;
+                // Face them all north
+                for turtle in turtle_manager.iter_turtles().await {
+                    let mut turtle_lock = turtle.lock().await;
+                    let _ = turtle_lock.face(Direction::NORTH).await;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
                 // Start a future action
                 for (turtle_id, (goal1, _)) in goals.iter() {
                     println!("Setting goal for turtle {turtle_id} to {goal1:?}");
@@ -97,7 +114,9 @@ async fn main() {
                 for (i, result) in results.iter().enumerate() {
                     println!("Turtle {i} path: {result:?}");
                 }
-                println!();
+                if !results.is_empty() { 
+                    println!();
+                }
 
                 for turtle in turtle_manager.iter_turtles().await {
                     // Make sure the turtle is valid
@@ -152,9 +171,16 @@ async fn main() {
                             "turtle" => {
                                 println!("it's a turtle");
                                 let new_turtle_id = turtle_manager.get_next_id().await;
-                                let turtle = Turtle::new(new_turtle_id, ws_stream, server_write_stream).await.unwrap();
-                                let turtle = Arc::new(Mutex::new(turtle));
-                                turtle_manager.add_turtle(turtle).await;
+
+                                match Turtle::new(new_turtle_id, ws_stream, server_write_stream).await {
+                                    Ok(turtle) => {
+                                        let turtle = Arc::new(Mutex::new(turtle));
+                                        turtle_manager.add_turtle(turtle).await;
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to initialize turtle. {e}");
+                                    }
+                                }
                             },
                             "client" => {
                                 println!("it's a client");

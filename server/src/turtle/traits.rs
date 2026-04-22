@@ -1,4 +1,4 @@
-use crate::turtle::types::TurtleError;
+use crate::turtle::{Direction, types::TurtleError};
 
 /// Trait for turtles with more than 
 pub trait SmartTurtle {
@@ -11,4 +11,5 @@ pub trait SmartTurtle {
 
     // Smart movement
     async fn move_to(&mut self, dx: i64, dy: i64, dz: i64) -> Result<(), TurtleError>;
+    async fn face(&mut self, direction: Direction) -> Result<(), TurtleError>;
 }

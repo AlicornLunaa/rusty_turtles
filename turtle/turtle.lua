@@ -1,4 +1,4 @@
-local version = 4
+local version = 2
 
 -- This is a simple dumb terminal program for the turtle.
 -- It is intended to be the part of the program which executes commands
@@ -285,18 +285,29 @@ local query_table = {
     -- Custom
     ["TurtleInit"] = function(args, socket)
         -- First get versions from server
-        if args["version"] < version then
+        if args["version"] > version then
             print("Script is out of date!")
             sleep(4)
 
             if args["script"] then
-                local file = fs.open("turtle.lua", "w")
-                file.write(args["script"])
-                file.close()
-                print("Script updated!")
+                print("Update available! Installing now...")
+
+                local newFile = fs.open("./startup.lua.new", "w")
+                newFile.write(args["script"])
+                newFile.close()
+
+                fs.move("./startup.lua", "./startup.lua.old")
+                fs.move("./startup.lua.new", "./startup.lua")
+                os.reboot()
+                sleep(1)
             end
                 
             os.exit()
+        else
+            xpcall(function()
+                fs.delete("./startup.lua.old")
+            end, function()
+            end )
         end
 
         -- Try location with GPS, then see if a saved state exists, then ask server to host GPS, all else fails then manual entry
@@ -306,10 +317,20 @@ local query_table = {
 
         if x ~= nil then
             -- GPS works, move forward and get the next position to determine face
-            turtle.forward()
+            local success = turtle.forward()
+            while not success do
+                sleep(0.5)
+                success = turtle.forward()
+            end
+
             local x2, y2, z2 = gps.locate()
-            turtle.back()
             
+            success = turtle.back()
+            while not success do
+                sleep(0.5)
+                success = turtle.back()
+            end
+
             local direction = "Unknown"
             if x2 > x then
                 direction = "East"
@@ -321,6 +342,7 @@ local query_table = {
                 direction = "North"
             end
             
+            print("GPS location: " .. x .. ", " .. y .. ", " .. z .. " facing " .. direction)
             location_data = { x = x, y = y, z = z, direction = direction }
 
             local file = fs.open("location.json", "w")

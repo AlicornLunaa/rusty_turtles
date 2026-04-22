@@ -154,7 +154,12 @@ impl Turtle {
         // Wait for the response
         match rx.await {
             Ok(response) => {
-                Ok(serde_json::from_value(response.data.unwrap()).unwrap())
+                let data = response.data.unwrap();
+
+                match serde_json::from_value(data) {
+                    Ok(data) => Ok(data),
+                    Err(e) => Err("Error with turtle setup. ".to_string() + &e.to_string()),
+                }
             },
             Err(e) => {
                 // The send command failed to obtain a result, probably closed

@@ -5,7 +5,7 @@ use tokio::sync::oneshot;
 use crate::{gateway::{ServerAction, ServerMessage}, turtle::{self, Side, Slot, SmartTurtle, client::Turtle, types::{Direction, TurtleError}}, util::vector::Vector3};
 
 /// Enum for determining tasks on a turtle
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "action", content = "args")]
 pub enum TurtleAction {
     // Movement

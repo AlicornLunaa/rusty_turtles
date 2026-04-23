@@ -360,7 +360,7 @@ impl Turtle {
 
         // Wait for the response
         match rx.await {
-            Ok(response) => Ok(serde_json::from_value(response.data.unwrap()).unwrap()),
+            Ok(response) => Ok(serde_json::from_value(response.data.unwrap_or(Value::Null)).unwrap()),
             Err(e) => {
                 // The send command failed to obtain a result, probably closed
                 *self.valid.lock().await = false;

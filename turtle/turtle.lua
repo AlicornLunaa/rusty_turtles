@@ -1,4 +1,4 @@
-local version = 4
+local version = 5
 
 -- This is a simple dumb terminal program for the turtle.
 -- It is intended to be the part of the program which executes commands
@@ -247,13 +247,13 @@ local query_table = {
         return { success = true, last_action = 0, data = turtle.getSelectedSlot() }
     end,
     ["GetItemCount"] = function(args)
-        return { success = true, last_action = 0, data = turtle.getItemCount(args[1]) }
+        return { success = true, last_action = 0, data = turtle.getItemCount(args["slot"]) }
     end,
     ["GetItemSpace"] = function(args)
-        return { success = true, last_action = 0, data = turtle.getItemSpace(args[1]) }
+        return { success = true, last_action = 0, data = turtle.getItemSpace(args["slot"]) }
     end,
     ["GetItemDetail"] = function(args)
-        return { success = true, last_action = 0, data = turtle.getItemDetail(args[1], args[2]) }
+        return { success = true, last_action = 0, data = turtle.getItemDetail(args["slot"], args["detailed"]) }
     end,
     ["Compare"] = function(args)
         return { success = true, last_action = 0, data = turtle.compare() }
@@ -265,7 +265,7 @@ local query_table = {
         return { success = true, last_action = 0, data = turtle.compareDown() }
     end,
     ["CompareTo"] = function(args)
-        return { success = true, last_action = 0, data = turtle.compareTo(args[1]) }
+        return { success = true, last_action = 0, data = turtle.compareTo(args["slot"]) }
     end,
 
     -- Fuel & slots

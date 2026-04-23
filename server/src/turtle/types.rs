@@ -15,6 +15,7 @@ pub type TurtleSource = SplitStream<WebSocketStream<TcpStream>>;
 pub type TurtleSocket = WebSocketStream<TcpStream>;
 
 /// Enums representing various parameters for turtle operations.
+#[derive(Debug)]
 pub enum TurtleMessage {
     Action { actions: Vec<TurtleAction>, return_tx: Option<oneshot::Sender<TurtleResponse>> },
     Query { query: Value, response: oneshot::Sender<TurtleResponse> }
@@ -56,13 +57,15 @@ pub enum Slot {
     SLOT16 = 16,
 }
 
+pub const SLOTS: [Slot; 16] = [Slot::SLOT1, Slot::SLOT2, Slot::SLOT3, Slot::SLOT4, Slot::SLOT5, Slot::SLOT6, Slot::SLOT7, Slot::SLOT8, Slot::SLOT9, Slot::SLOT10, Slot::SLOT11, Slot::SLOT12, Slot::SLOT13, Slot::SLOT14, Slot::SLOT15, Slot::SLOT16];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FuelLevel {
     Amount(u32),
     Unlimited,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct TurtleResponse {
     pub success: bool, // if the command failed
     pub reason: Option<String>, // Why the command failed

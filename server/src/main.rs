@@ -16,6 +16,7 @@ use crate::turtle::queries::GetItemDetail;
 use crate::turtle::{Direction, SLOTS, SmartTurtle, Turtle, TurtleAction};
 use crate::util::vector::Vector3;
 
+mod scheduler;
 mod managers;
 mod gateway;
 mod turtle;

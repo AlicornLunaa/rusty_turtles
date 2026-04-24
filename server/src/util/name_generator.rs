@@ -25,7 +25,9 @@ pub fn generate_random_name() -> String {
         "Superfluous", "Surreptitious", "Taciturn", "Tenacious", "Tepid", "Terse", "Transient", "Trepidatious", 
         "Trite", "Ubiquitous", "Uncanny", "Unctuous", "Venerable", "Verbose", "Vexatious", "Vibrant", 
         "Vicarious", "Vigilant", "Visceral", "Vituperative", "Vivacious", "Volatile", "Voracious", "Winsome", 
-        "Wistful", "Zealous", "Zenithal", "Hateful", "Zesty", "Freaky"
+        "Wistful", "Zealous", "Zenithal", "Hateful", "Zesty", "Freaky", "Suspicious", "Buoyant", "Loud", "Wide",
+        "Delicious", "Rotund", "Ancient", "Masterwork", "Thin", "Conductive", "Oblong", "Sedentary", "Insufferable",
+        "Annoying", "Viscous", "Shiny", "Cursed", "Doomed", "Cavernous", "Impervious"
     ];
 
     let nouns = [

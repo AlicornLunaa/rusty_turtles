@@ -21,7 +21,6 @@ impl PartialOrd for Job {
     }
 }
 
-
 /// Job Scheduler
 pub struct JobScheduler {
     jobs: BinaryHeap<Job>,

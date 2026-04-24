@@ -7,10 +7,10 @@ use shared::blocks::{Block, BlockNotification};
 use tokio::sync::{self, broadcast, mpsc};
 
 #[derive(Hash, Eq, PartialEq, Clone, Copy)]
-pub struct Coord { x: i64, y: i64, z: i64 }
+struct Coord { x: i64, y: i64, z: i64 }
 
-/// Interactions
-pub enum BlockManagerCommand {
+/// Interactions for ORM on disk
+enum DatabaseCommand {
     UpdateBlock { x: i64, y: i64, z: i64, block_type: String },
     RemoveBlock { x: i64, y: i64, z: i64 },
     GetAllBlocks { reply: sync::oneshot::Sender<Vec<Block>> }
@@ -20,7 +20,7 @@ pub enum BlockManagerCommand {
 #[derive(Clone)]
 pub struct BlockManager {
     grid: Arc<DashMap<Coord, (String, i64)>>,
-    database_tx: mpsc::Sender<BlockManagerCommand>,
+    database_tx: mpsc::Sender<DatabaseCommand>,
     notification_tx: sync::broadcast::Sender<BlockNotification>,
 }
 
@@ -35,14 +35,14 @@ impl BlockManager {
             
             while let Some(cmd) = database_rx.recv().await {
                 match cmd {
-                    BlockManagerCommand::UpdateBlock { x, y, z, block_type } => {
+                    DatabaseCommand::UpdateBlock { x, y, z, block_type } => {
                         // Await the slow database insert here
                         db_connection.upsert_block(Block { x, y, z, block_type, last_updated: 0 }).await.unwrap();
                     },
-                    BlockManagerCommand::RemoveBlock { x, y, z } => {
+                    DatabaseCommand::RemoveBlock { x, y, z } => {
                         db_connection.remove_block(x, y, z).await.unwrap();
                     },
-                    BlockManagerCommand::GetAllBlocks { reply } => {
+                    DatabaseCommand::GetAllBlocks { reply } => {
                         let block_list = db_connection.get_all_blocks().await;
                         reply.send(block_list.unwrap_or(Vec::new())).unwrap();
                     },
@@ -52,7 +52,7 @@ impl BlockManager {
 
         // Read the entirety of the database into the grid
         let (tx, rx) = sync::oneshot::channel();
-        database_tx.send(BlockManagerCommand::GetAllBlocks { reply: tx }).await.unwrap();
+        database_tx.send(DatabaseCommand::GetAllBlocks { reply: tx }).await.unwrap();
 
         let block_data = match rx.await {
             Ok(data) => data,
@@ -82,14 +82,14 @@ impl BlockManager {
         self.grid.insert(Coord { x, y, z }, (block_type.clone(), chrono::Utc::now().timestamp()));
 
         let _ = self.notification_tx.send(BlockNotification::Update(Block { x, y, z, block_type: block_type.clone(), last_updated: chrono::Utc::now().timestamp() }));
-        let _ = self.database_tx.send(BlockManagerCommand::UpdateBlock { x, y, z, block_type }).await;
+        let _ = self.database_tx.send(DatabaseCommand::UpdateBlock { x, y, z, block_type }).await;
     }
 
     pub async fn remove_block(&self, x: i64, y: i64, z: i64) {
         self.grid.remove(&Coord { x, y, z });
 
         let _ = self.notification_tx.send(BlockNotification::Remove(x, y, z ));
-        let _ = self.database_tx.send(BlockManagerCommand::RemoveBlock { x, y, z }).await;
+        let _ = self.database_tx.send(DatabaseCommand::RemoveBlock { x, y, z }).await;
     }
 
     pub fn get_block(&self, x: i64, y: i64, z: i64) -> Option<Block> {

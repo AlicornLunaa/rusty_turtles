@@ -10,7 +10,13 @@ pub struct Block {
     pub last_updated: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum BlockNotification {
+    Update(Block),
+    Remove(i64, i64, i64),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Chest {
     pub x: i64,
     pub y: i64,
@@ -21,7 +27,7 @@ pub struct Chest {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum BlockNotification {
-    Update(Block),
+pub enum ChestNotification {
+    Update(Chest),
     Remove(i64, i64, i64),
 }

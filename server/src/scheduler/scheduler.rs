@@ -1,50 +1,50 @@
 use std::{cmp::Ordering, collections::BinaryHeap};
 
-use crate::scheduler::actions::JobAction;
+use crate::scheduler::actions::TaskAction;
 
 /// Job object
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-struct Job {
+#[derive(Clone, Eq, PartialEq, Debug)]
+struct Task {
     priority: i64,
-    action: JobAction,
+    action: TaskAction,
 }
 
-impl Ord for Job {
+impl Ord for Task {
     fn cmp(&self, other: &Self) -> Ordering {
         other.priority.cmp(&self.priority)
     }
 }
 
-impl PartialOrd for Job {
+impl PartialOrd for Task {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 /// Job Scheduler
-pub struct JobScheduler {
-    jobs: BinaryHeap<Job>,
+pub struct TaskScheduler {
+    tasks: BinaryHeap<Task>,
 }
 
-impl JobScheduler {
+impl TaskScheduler {
     pub fn new() -> Self {
         Self {
-            jobs: BinaryHeap::new()
+            tasks: BinaryHeap::new()
         }
     }
 
-    pub fn add_job(&mut self, action: JobAction, priority: i64) {
-        self.jobs.push(Job { priority, action });
+    pub fn add_task(&mut self, action: TaskAction, priority: i64) {
+        self.tasks.push(Task { priority, action });
     }
 
-    pub fn pop_job(&mut self) -> Option<JobAction> {
-        match self.jobs.pop() {
+    pub fn pop_task(&mut self) -> Option<TaskAction> {
+        match self.tasks.pop() {
             Some(job) => Some(job.action),
             None => None,
         }
     }
 
-    pub fn queue_size(&self) -> usize {
-        self.jobs.len()
+    pub fn len(&self) -> usize {
+        self.tasks.len()
     }
 }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::managers::{object_relations::ORM, turtle_manager::TurtleManager};
+use crate::{managers::{object_relations::ORM, turtle_manager::TurtleManager}, util::vector::Vector3};
 use dashmap::DashMap;
 use shared::blocks::{Chest, ChestNotification};
 use tokio::sync::{self, broadcast, mpsc};
@@ -106,5 +106,10 @@ impl InventoryManager {
             let (item_type, count, max_count) = entry.value().clone();
             Chest { x: coord.x, y: coord.y, z: coord.z, item_type, count, max_count }
         }).collect()
+    }
+
+    pub async fn find_chest(&self, item: &str, pos: Vector3) -> Option<Chest> {
+        // Finds chest containing item closest to position
+        todo!()
     }
 }

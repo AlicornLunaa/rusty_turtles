@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use tokio::sync::oneshot;
 
-use crate::{gateway::{ServerAction, ServerMessage}, turtle::{self, Side, Slot, SmartTurtle, client::Turtle, types::{Direction, TurtleError}}, util::vector::Vector3};
+use crate::{gateway::{ServerAction, ServerMessage}, turtle::{self, Side, Slot, SmartTurtle, client::Turtle, types::{Direction, TurtleError}}};
 
 /// Enum for determining tasks on a turtle
 #[derive(Serialize, Deserialize, Clone, Debug)]

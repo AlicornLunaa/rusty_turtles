@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod block_manager;
 pub mod inventory_manager;
 pub mod turtle_manager;

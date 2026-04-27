@@ -2,18 +2,18 @@ use super::*;
 
 #[test]
 fn test_add_pop() {
-    let mut scheduler = JobScheduler::new();
-    scheduler.add_job(JobAction::Build, 10);
-    scheduler.add_job(JobAction::Mine, 5);
-    assert_eq!(scheduler.queue_size(), 2);
-    assert_eq!(scheduler.pop_job(), Some(JobAction::Mine));
-    assert_eq!(scheduler.queue_size(), 1);
+    let mut scheduler = TaskScheduler::new();
+    scheduler.add_task(TaskAction::Place { x: 0, y: 0, z: 0, block: "minecraft:stone".into() }, 10);
+    scheduler.add_task(TaskAction::Break { x: 0, y: 0, z: 0 }, 5);
+    assert_eq!(scheduler.len(), 2);
+    assert_eq!(scheduler.pop_task(), Some(TaskAction::Break { x: 0, y: 0, z: 0 }));
+    assert_eq!(scheduler.len(), 1);
 
-    scheduler.add_job(JobAction::Mine, 15);
+    scheduler.add_task(TaskAction::Break { x: 0, y: 0, z: 0 }, 15);
 
-    assert_eq!(scheduler.pop_job(), Some(JobAction::Build));
-    assert_eq!(scheduler.pop_job(), Some(JobAction::Mine));
-    assert_eq!(scheduler.queue_size(), 0);
+    assert_eq!(scheduler.pop_task(), Some(TaskAction::Place { x: 0, y: 0, z: 0, block: "minecraft:stone".into() }));
+    assert_eq!(scheduler.pop_task(), Some(TaskAction::Break { x: 0, y: 0, z: 0 }));
+    assert_eq!(scheduler.len(), 0);
 
-    assert_eq!(scheduler.pop_job(), None);
+    assert_eq!(scheduler.pop_task(), None);
 }

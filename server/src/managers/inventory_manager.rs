@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{managers::{object_relations::ORM, turtle_manager::TurtleManager}, util::vector::Vector3};
 use dashmap::DashMap;
 use shared::blocks::{Chest, ChestNotification};
-use tokio::sync::{self, broadcast, mpsc};
+use tokio::sync::{self, Semaphore, broadcast, mpsc};
 
 #[derive(Hash, Eq, PartialEq, Clone, Copy)]
 struct Coord { x: i64, y: i64, z: i64 }
@@ -12,6 +12,31 @@ enum DatabaseCommand {
     UpdateInventory { chest: Chest },
     RemoveInventory { x: i64, y: i64, z: i64 },
     GetAllChests { reply: sync::oneshot::Sender<Vec<Chest>> }
+}
+
+pub struct ChestResource {
+    position: Vector3,
+    open_spots: Semaphore,
+    sides: Vec<Vector3>,
+}
+
+impl ChestResource {
+    pub fn new(position: Vector3) -> Self {
+        let sides = vec![
+            position + Vector3::new(-1, 0, 0),
+            position + Vector3::new(1, 0, 0),
+            position + Vector3::new(0, -1, 0),
+            position + Vector3::new(0, 1, 0),
+            position + Vector3::new(0, 0, -1),
+            position + Vector3::new(0, 0, 1),
+        ];
+
+        Self {
+            position,
+            open_spots: Semaphore::new(6),
+            sides
+        }
+    }
 }
 
 /// Common interactor for outside module

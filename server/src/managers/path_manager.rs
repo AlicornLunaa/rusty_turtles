@@ -1,6 +1,7 @@
-use std::{cmp::Ordering, collections::{BinaryHeap, HashMap}};
+use std::{cmp::Ordering, collections::{BinaryHeap, HashMap}, sync::{Arc, atomic::{AtomicU64, AtomicUsize}}};
 
 use rustc_hash::FxHashMap;
+use tokio::{sync::{self, mpsc}, task::JoinHandle};
 
 use crate::turtle::traits::SmartTurtle;
 use crate::{managers::{block_manager::BlockManager, turtle_manager::TurtleManager}, util::vector::Vector3};
@@ -35,14 +36,15 @@ impl PartialOrd for Node {
 }
 
 /// This handles all the paths within the ledger
+#[derive(Clone)]
 pub struct PathManager {
     turtle_manager: TurtleManager,
     block_manager: BlockManager,
     goals: FxHashMap<u64, Vector3>,
     reservations: ReservationMap,
     transitions: TransitionMap,
-    window: u64,
-    tick: usize,
+    window: Arc<AtomicU64>,
+    tick: Arc<AtomicUsize>,
 }
 
 impl PathManager {
@@ -53,8 +55,8 @@ impl PathManager {
             goals: FxHashMap::default(),
             reservations: FxHashMap::default(),
             transitions: FxHashMap::default(),
-            window: 32,
-            tick: 0,
+            window: Arc::new(AtomicU64::new(32)),
+            tick: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -108,7 +110,7 @@ impl PathManager {
         let mut g_score: FxHashMap<Coord, i64> = FxHashMap::default();
 
         let now = chrono::Utc::now().timestamp();
-        let start_tick = self.tick;
+        let start_tick = self.tick.load(std::sync::atomic::Ordering::Relaxed);
         let start_coord = Coord { pos: from, tick: start_tick };
         
         g_score.insert(start_coord, 0);
@@ -135,7 +137,10 @@ impl PathManager {
             }
 
             // We've reached the end of our planning window, stop searching further
-            if current.tick >= (self.tick + self.window as usize) {
+            let tick = self.tick.load(std::sync::atomic::Ordering::Relaxed);
+            let window = self.window.load(std::sync::atomic::Ordering::Relaxed) as usize;
+
+            if current.tick >= (tick + window as usize) {
                 break;
             }
 
@@ -252,7 +257,10 @@ impl PathManager {
         // Reserve the current spot up to window, used for stationary turtles that still need to be considered in pathfinding
         let mut dummy_path = Vec::new();
 
-        for i in self.tick..=(self.tick + self.window as usize) {
+        let tick = self.tick.load(std::sync::atomic::Ordering::Relaxed);
+        let window = self.window.load(std::sync::atomic::Ordering::Relaxed) as usize;
+
+        for i in tick..=(tick + window) {
             dummy_path.push(Coord { pos, tick: i });
         }
 
@@ -260,7 +268,7 @@ impl PathManager {
     }
 
     pub fn set_window(&mut self, window: u64) {
-        self.window = window;
+        self.window.store(window, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn set_goal(&mut self, turtle_id: u64, to: Vector3) {
@@ -303,7 +311,8 @@ impl PathManager {
             if let Some(turtle) = self.turtle_manager.get_turtle(*turtle_id).await {
                 let turtle = turtle.lock().await;
                 let current_pos = Vector3::from(turtle.get_position());
-                let path = vec![Coord { pos: current_pos, tick: self.tick }, Coord { pos: current_pos, tick: self.tick + 1 }];
+                let tick = self.tick.load(std::sync::atomic::Ordering::Relaxed);
+                let path = vec![Coord { pos: current_pos, tick }, Coord { pos: current_pos, tick: tick + 1 }];
                 self.reserve(*turtle_id, path);
             }
         }
@@ -396,6 +405,49 @@ impl PathManager {
     }
 }
 
+/// Asyncronous runner wrapper for the path manager
+#[derive(Clone)]
+pub struct AsyncPathManager {
+    path_manager: PathManager,
+    join_handle: Arc<JoinHandle<()>>,
+    tx: mpsc::Sender<(u64, Vector3, sync::oneshot::Sender<Result<(), String>>)>
+}
+
+impl AsyncPathManager {
+    pub fn new(block_manager: BlockManager, turtle_manager: TurtleManager) -> Self {
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let join_handle = tokio::spawn(async move {
+            // Process requests from rx and also execute the steps in the path manager, this allows for things to join during others pathing
+        });
+
+        Self {
+            path_manager: PathManager::new(block_manager, turtle_manager),
+            join_handle: Arc::new(join_handle),
+            tx
+        }
+    }
+
+    pub async fn path(&self, turtle_id: u64, goal: Vector3) -> Result<(), String> {
+        let (response_tx, response_rx) = sync::oneshot::channel();
+        self.tx.send((turtle_id, goal, response_tx)).await.map_err(|e| format!("Failed to queue request: {}", e))?;
+
+        match response_rx.await {
+            Ok(result) => result,
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
+impl Drop for AsyncPathManager {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.join_handle) <= 1 {
+            self.join_handle.abort();
+        }
+    }
+}
+
+/// Tests
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,8 +638,11 @@ mod tests {
         pl.reserve(turtle_id, path);
         
         // Check if all coords in window are reserved
-        for t in 0..=pl.window as usize {
-            let coord = Coord { pos, tick: pl.tick + t };
+        let tick = pl.tick.load(std::sync::atomic::Ordering::Relaxed);
+        let window = pl.window.load(std::sync::atomic::Ordering::Relaxed) as usize;
+
+        for t in 0..=window {
+            let coord = Coord { pos, tick: tick + t };
             assert!(pl.reservations.contains_key(&coord), "Stationary turtle not reserved at tick {}", coord.tick);
             assert_eq!(pl.reservations.get(&coord).unwrap(), &turtle_id, "Wrong turtle reserved at tick {}", coord.tick);
         }

@@ -416,13 +416,52 @@ pub struct AsyncPathManager {
 impl AsyncPathManager {
     pub fn new(block_manager: BlockManager, turtle_manager: TurtleManager) -> Self {
         let (tx, mut rx) = mpsc::channel(16);
+        let mut path_manager = PathManager::new(block_manager, turtle_manager);
+        let pm_clone = path_manager.clone();
 
         let join_handle = tokio::spawn(async move {
-            // Process requests from rx and also execute the steps in the path manager, this allows for things to join during others pathing
+            let mut pending_responses: HashMap<u64, sync::oneshot::Sender<Result<(), String>>> = HashMap::new();
+            let mut results = HashMap::new();
+            let mut paths = HashMap::new();
+
+            loop {
+                // If we have no active goals, wait for one
+                if pending_responses.is_empty() {
+                    match rx.recv().await {
+                        Some((turtle_id, goal, response_tx)) => {
+                            path_manager.set_goal(turtle_id, goal);
+                            pending_responses.insert(turtle_id, response_tx);
+                        }
+                        None => break, // Channel closed
+                    }
+                }
+
+                // Non-blocking check for more goals
+                while let Ok((turtle_id, goal, response_tx)) = rx.try_recv() {
+                    path_manager.set_goal(turtle_id, goal);
+                    pending_responses.insert(turtle_id, response_tx);
+                }
+
+                // Execute one step for all active goals
+                path_manager.execute_step(&mut results, &mut paths).await;
+
+                // Check which turtles finished or failed
+                let finished_ids: Vec<u64> = results.keys().cloned().collect();
+                for id in finished_ids {
+                    if let Some(response_tx) = pending_responses.remove(&id) {
+                        if let Some(result) = results.remove(&id) {
+                            let _ = response_tx.send(result);
+                            path_manager.goals.remove(&id);
+                        }
+                    }
+                }
+                
+                tokio::task::yield_now().await;
+            }
         });
 
         Self {
-            path_manager: PathManager::new(block_manager, turtle_manager),
+            path_manager: pm_clone,
             join_handle: Arc::new(join_handle),
             tx
         }
@@ -436,6 +475,10 @@ impl AsyncPathManager {
             Ok(result) => result,
             Err(e) => Err(e.to_string()),
         }
+    }
+
+    pub fn set_window(&mut self, window: u64) {
+        self.path_manager.set_window(window);
     }
 }
 
@@ -758,5 +801,22 @@ mod tests {
         
         // One of them must have waited or moved elsewhere
         assert!(!(t1_pos_at_1.pos.x == 1 && t2_pos_at_1.pos.x == 0), "Swap collision detected at t=1");
+    }
+
+    #[tokio::test]
+    async fn test_async_path_manager() {
+        let bm = BlockManager::new().await;
+        let tm = TurtleManager::new();
+        let apm = AsyncPathManager::new(bm, tm);
+
+        // Since we don't have real turtles in this test, 
+        // AsyncPathManager will fail to acquire them and return an error.
+        // But this still verifies the communication loop.
+        
+        let goal = Vector3::new(1, 0, 0);
+        let result = apm.path(1, goal).await;
+        
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Couldn't acquire turtle.");
     }
 }

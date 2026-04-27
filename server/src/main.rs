@@ -10,7 +10,7 @@ use crate::client::Client;
 use crate::gateway::Gateway;
 use crate::managers::block_manager::BlockManager;
 use crate::managers::client_manager::ClientManager;
-use crate::managers::path_manager::PathManager;
+use crate::managers::path_manager::{AsyncPathManager, PathManager};
 use crate::managers::turtle_manager::TurtleManager;
 use crate::turtle::queries::GetItemDetail;
 use crate::turtle::{Direction, SLOTS, SmartTurtle, Turtle, TurtleAction};
@@ -45,7 +45,7 @@ async fn main() {
     let turtle_manager = TurtleManager::new();
     let block_manager = BlockManager::new().await;
     let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone());
-    let mut planner = PathManager::new(block_manager.clone(), turtle_manager.clone());
+    let mut planner = AsyncPathManager::new(block_manager.clone(), turtle_manager.clone());
 
     let listener = create_socket_server().await;
 
@@ -84,40 +84,32 @@ async fn main() {
                     goals.insert(turtle_id, (center + offset1, center + offset2));
                 }
 
-                // Fuel all of the turtles
-                for turtle in turtle_manager.iter_turtles().await {
-                    let mut turtle = turtle.lock().await;
-
-                    for slot in SLOTS {
-                        let item = turtle.query(GetItemDetail {slot:Some(slot), detailed: Some(false)}).await.unwrap();
-                        
-                        if let Some(item) = item {
-                            if item["name"].as_str().unwrap() == "minecraft:coal_block" {
-                                let count = item["count"].as_u64().unwrap() as u8;
-                                let _ = turtle.execute_batch(vec![TurtleAction::Select { slot }, TurtleAction::Refuel { count: Some(count) }]).await;
-                            } else if item["name"].as_str().unwrap() == "computercraft:wireless_modem_advanced" {
-                                let _ = turtle.execute_batch(vec![TurtleAction::Select { slot }, TurtleAction::EquipLeft]).await;
-                            }
-                        }
-                    }
-                }
-
                 // Move every turtle into a square for a start
-                planner.set_window(16);
+                let mut handles = Vec::new();
                 let mut index = 0;
+                planner.set_window(16);
+
                 for turtle_id in turtle_manager.iter_ids().await {
                     let goal = Vector3::new(-31 + (index % 5) * 2, 56, center.z + (index / 5) * 2);
+
                     println!("Setting initial goal for turtle {turtle_id} to {goal:?}");
-                    planner.set_goal(turtle_id, goal);
+
+                    handles.push({
+                        let planner = planner.clone();
+                        let random_goal = *goals.get(&turtle_id).unwrap();
+
+                        async move {
+                            let _ = planner.path(turtle_id, goal).await;
+                            let _ = planner.path(turtle_id, random_goal.0).await;
+                            let _ = planner.path(turtle_id, goal).await;
+                        }
+                    });
+
                     index += 1;
                 }
-                let results = planner.execute().await;
-                for (i, result) in results.iter().enumerate() {
-                    println!("Turtle {i} path: {result:?}");
-                }
-                if !results.is_empty() { 
-                    println!();
-                }
+
+                futures_util::future::join_all(handles).await;
+
                 // Face them all north
                 for turtle in turtle_manager.iter_turtles().await {
                     let mut turtle_lock = turtle.lock().await;
@@ -126,38 +118,38 @@ async fn main() {
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
                 // Move into LOSS formation
-                let corner = Vector3::new(-31, 56, -1);
-                let formation = [
-                    "01000101010",
-                    "01000101010",
-                    "00000100000",
-                    "11111111111",
-                    "00000100000",
-                    "01010101000",
-                    "01010101011",
-                ];
-                let mut goal_list = Vec::new();
-                for (row, line) in formation.iter().enumerate() {
-                    for (col, ch) in line.chars().enumerate() {
-                        if ch == '1' {
-                            let offset = Vector3::new(col as i64, 0, row as i64);
-                            goal_list.push(corner + offset);
-                        }
-                    }
-                }
-                let mut index = 0;
-                for turtle_id in turtle_manager.iter_ids().await {
-                    if index >= goal_list.len() {
-                        break; // no more formation spots
-                    }
+                // let corner = Vector3::new(-31, 56, -1);
+                // let formation = [
+                //     "01000101010",
+                //     "01000101010",
+                //     "00000100000",
+                //     "11111111111",
+                //     "00000100000",
+                //     "01010101000",
+                //     "01010101011",
+                // ];
+                // let mut goal_list = Vec::new();
+                // for (row, line) in formation.iter().enumerate() {
+                //     for (col, ch) in line.chars().enumerate() {
+                //         if ch == '1' {
+                //             let offset = Vector3::new(col as i64, 0, row as i64);
+                //             goal_list.push(corner + offset);
+                //         }
+                //     }
+                // }
+                // let mut index = 0;
+                // for turtle_id in turtle_manager.iter_ids().await {
+                //     if index >= goal_list.len() {
+                //         break; // no more formation spots
+                //     }
 
-                    let goal = goal_list[index];
-                    println!("Setting initial goal for turtle {turtle_id} to {goal:?}");
-                    planner.set_goal(turtle_id, goal);
-                    index += 1;
-                }
-                planner.execute().await;
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                //     let goal = goal_list[index];
+                //     println!("Setting initial goal for turtle {turtle_id} to {goal:?}");
+                //     planner.set_goal(turtle_id, goal);
+                //     index += 1;
+                // }
+                // planner.execute().await;
+                // tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
                 // // Start a future action
                 // for (turtle_id, (goal1, _)) in goals.iter() {

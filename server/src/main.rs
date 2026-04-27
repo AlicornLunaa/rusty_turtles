@@ -10,10 +10,9 @@ use crate::client::Client;
 use crate::gateway::Gateway;
 use crate::managers::block_manager::BlockManager;
 use crate::managers::client_manager::ClientManager;
-use crate::managers::path_manager::{AsyncPathManager, PathManager};
+use crate::managers::path_manager::AsyncPathManager;
 use crate::managers::turtle_manager::TurtleManager;
-use crate::turtle::queries::GetItemDetail;
-use crate::turtle::{Direction, SLOTS, SmartTurtle, Turtle, TurtleAction};
+use crate::turtle::{Direction, SmartTurtle, Turtle};
 use crate::util::vector::Vector3;
 
 mod scheduler;

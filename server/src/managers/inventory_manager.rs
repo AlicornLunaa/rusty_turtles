@@ -135,6 +135,27 @@ impl InventoryManager {
 
     pub async fn find_chest(&self, item: &str, pos: Vector3) -> Option<Chest> {
         // Finds chest containing item closest to position
-        todo!()
+        // TODO: Better implementation using spatial partitioning or something
+        let mut min_distance = 0;
+        let mut min_chest = None;
+
+        for chest in self.iter_chests() {
+            // Guard for mismatched types
+            if chest.item_type != item {
+                continue;
+            }
+
+            // Calculate distance
+            let chest_position = Vector3::new(chest.x, chest.y, chest.z);
+            let distance = Vector3::manhattan_distance(&pos, &chest_position);
+
+            // Check
+            if distance < min_distance {
+                min_distance = distance;
+                min_chest = Some(chest);
+            }
+        }
+
+        min_chest
     }
 }

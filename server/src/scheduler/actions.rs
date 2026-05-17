@@ -12,6 +12,7 @@ pub enum TaskAction {
     Break{ x: i64, y: i64, z: i64 },
     Drop{ x: i64, y: i64, z: i64, item: String },
     Suck{ x: i64, y: i64, z: i64 },
+    Chain{ list: Vec<TaskAction> }
 }
 
 fn move_to(turtle: &Arc<Mutex<Turtle>>, x: i64, y: i64, z: i64) -> bool {
@@ -26,5 +27,6 @@ pub async fn dispatch(turtle: &Arc<Mutex<Turtle>>, task: TaskAction) -> bool {
         TaskAction::Break { x, y, z } => todo!(),
         TaskAction::Drop { x, y, z, item } => todo!(),
         TaskAction::Suck { x, y, z } => todo!(),
+        TaskAction::Chain { list } => todo!(),
     }
 }

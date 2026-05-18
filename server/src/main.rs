@@ -12,6 +12,7 @@ use crate::managers::block_manager::BlockManager;
 use crate::managers::client_manager::ClientManager;
 use crate::managers::path_manager::AsyncPathManager;
 use crate::managers::turtle_manager::TurtleManager;
+use crate::scheduler::{SchedulerSystem, TaskScheduler};
 use crate::turtle::{Direction, SmartTurtle, Turtle};
 use crate::util::vector::Vector3;
 
@@ -44,160 +45,174 @@ async fn main() {
     let turtle_manager = TurtleManager::new();
     let block_manager = BlockManager::new().await;
     let gateway = Gateway::new(turtle_manager.clone(), block_manager.clone());
-    let mut planner = AsyncPathManager::new(block_manager.clone(), turtle_manager.clone());
+    let mut paths = AsyncPathManager::new(block_manager.clone(), turtle_manager.clone());
+
+    let scheduler = TaskScheduler::new();
+    let turtle_system = SchedulerSystem::new(scheduler.clone(), turtle_manager.clone(), paths.clone());
 
     let listener = create_socket_server().await;
 
-    // Testing loop
-    tokio::spawn({
-        let turtle_manager = turtle_manager.clone();
-        let mut goals = FxHashMap::default();
-        
-        async move {
-            // Spawn a thread which every 10 seconds spawns a thread to communicate with turtles
-            loop {
-                let turtles_to_remove = Arc::new(Mutex::new(HashSet::new()));
+    // Testing tasks
+    {
+        let center = Vector3::new(-12, 56, -20);
 
-                // Create goals for every turtle, just some random coordinates around the center of the world for now
-                let center = Vector3::new(-12, 56, -1);
-
-                for turtle_id in turtle_manager.iter_ids().await {
-                    if goals.contains_key(&turtle_id) {
-                        continue;
-                    }
-
-                    let mut offset1 = Vector3::new(rand::random::<i64>() % 10 - 5, 0, rand::random::<i64>() % 10 - 5);
-                    let mut offset2 = Vector3::new(rand::random::<i64>() % 10 - 5, 0, rand::random::<i64>() % 10 - 5);
-
-                    // Check for overlapping goals and adjust if necessary by moving it a bit further out in the same direction until it's not overlapping anymore
-                    while goals.values().any(|&(goal1, goal2)| center + offset1 == goal1 || center + offset1 == goal2) {
-                        let direction = offset1.normalize();
-                        offset1 = offset1 + direction * 2;
-                    }
-
-                    while goals.values().any(|&(goal1, goal2)| center + offset2 == goal1 || center + offset2 == goal2) {
-                        let direction = offset2.normalize();
-                        offset2 = offset2 + direction * 2;
-                    }
-
-                    goals.insert(turtle_id, (center + offset1, center + offset2));
-                }
-
-                // Move every turtle into a square for a start
-                let mut handles = Vec::new();
-                let mut index = 0;
-                planner.set_window(16);
-
-                for turtle_id in turtle_manager.iter_ids().await {
-                    let goal = Vector3::new(-31 + (index % 5) * 2, 56, center.z + (index / 5) * 2);
-
-                    println!("Setting initial goal for turtle {turtle_id} to {goal:?}");
-
-                    handles.push({
-                        let planner = planner.clone();
-                        let random_goal = *goals.get(&turtle_id).unwrap();
-
-                        async move {
-                            let _ = planner.path(turtle_id, goal).await;
-                            let _ = planner.path(turtle_id, random_goal.0).await;
-                            let _ = planner.path(turtle_id, goal).await;
-                        }
-                    });
-
-                    index += 1;
-                }
-
-                futures_util::future::join_all(handles).await;
-
-                // Face them all north
-                for turtle in turtle_manager.iter_turtles().await {
-                    let mut turtle_lock = turtle.lock().await;
-                    let _ = turtle_lock.face(Direction::NORTH).await;
-                }
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-
-                // Move into LOSS formation
-                // let corner = Vector3::new(-31, 56, -1);
-                // let formation = [
-                //     "01000101010",
-                //     "01000101010",
-                //     "00000100000",
-                //     "11111111111",
-                //     "00000100000",
-                //     "01010101000",
-                //     "01010101011",
-                // ];
-                // let mut goal_list = Vec::new();
-                // for (row, line) in formation.iter().enumerate() {
-                //     for (col, ch) in line.chars().enumerate() {
-                //         if ch == '1' {
-                //             let offset = Vector3::new(col as i64, 0, row as i64);
-                //             goal_list.push(corner + offset);
-                //         }
-                //     }
-                // }
-                // let mut index = 0;
-                // for turtle_id in turtle_manager.iter_ids().await {
-                //     if index >= goal_list.len() {
-                //         break; // no more formation spots
-                //     }
-
-                //     let goal = goal_list[index];
-                //     println!("Setting initial goal for turtle {turtle_id} to {goal:?}");
-                //     planner.set_goal(turtle_id, goal);
-                //     index += 1;
-                // }
-                // planner.execute().await;
-                // tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-
-                // // Start a future action
-                // for (turtle_id, (goal1, _)) in goals.iter() {
-                //     println!("Setting goal for turtle {turtle_id} to {goal1:?}");
-                //     planner.set_goal(*turtle_id, *goal1);
-                // }
-                // planner.execute().await;
-                // for (turtle_id, (_, goal2)) in goals.iter() {
-                //     println!("Setting goal for turtle {turtle_id} to {goal2:?}");
-                //     planner.set_goal(*turtle_id, *goal2);
-                // }
-                // let results = planner.execute().await;
-
-                // for (i, result) in results.iter().enumerate() {
-                //     println!("Turtle {i} path: {result:?}");
-                // }
-                // if !results.is_empty() { 
-                //     println!();
-                // }
-
-                for turtle in turtle_manager.iter_turtles().await {
-                    // Make sure the turtle is valid
-                    {
-                        let turtle_lock = turtle.lock().await;
-
-                        if !turtle_lock.is_valid().await {
-                            turtles_to_remove.lock().await.insert(turtle_lock.get_id());
-                            continue;
-                        }
-                    }
-                }
-
-                {
-                    // Remove turtles marked as invalid
-                    let mut turtles_to_remove = turtles_to_remove.lock().await;
-        
-                    for i in turtles_to_remove.iter() {
-                        println!("Removing turtle {i}");
-                        turtle_manager.remove_turtle(*i).await;
-                        goals.remove(i);
-                    }
-        
-                    turtles_to_remove.clear();
-                }
-
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            }
+        for i in 0..32 {
+            let goal = Vector3::new(-40 + (i % 5) * 2, 56, center.z + (i / 5) * 2);
+            scheduler.add_task(scheduler::TaskAction::MoveTo { x: goal.x, y: goal.y, z: goal.z }, i).await;
+            println!("Added task to move to {goal:?}");
         }
-    });
+    }
+
+    // Testing loop
+    // tokio::spawn({
+    //     let turtle_manager = turtle_manager.clone();
+    //     let mut goals = FxHashMap::default();
+        
+    //     async move {
+    //         // Spawn a thread which every 10 seconds spawns a thread to communicate with turtles
+    //         loop {
+    //             let turtles_to_remove = Arc::new(Mutex::new(HashSet::new()));
+
+    //             // Create goals for every turtle, just some random coordinates around the center of the world for now
+    //             let center = Vector3::new(-12, 56, -1);
+
+    //             for turtle_id in turtle_manager.iter_ids().await {
+    //                 if goals.contains_key(&turtle_id) {
+    //                     continue;
+    //                 }
+
+    //                 let mut offset1 = Vector3::new(rand::random::<i64>() % 10 - 5, 0, rand::random::<i64>() % 10 - 5);
+    //                 let mut offset2 = Vector3::new(rand::random::<i64>() % 10 - 5, 0, rand::random::<i64>() % 10 - 5);
+
+    //                 // Check for overlapping goals and adjust if necessary by moving it a bit further out in the same direction until it's not overlapping anymore
+    //                 while goals.values().any(|&(goal1, goal2)| center + offset1 == goal1 || center + offset1 == goal2) {
+    //                     let direction = offset1.normalize();
+    //                     offset1 = offset1 + direction * 2;
+    //                 }
+
+    //                 while goals.values().any(|&(goal1, goal2)| center + offset2 == goal1 || center + offset2 == goal2) {
+    //                     let direction = offset2.normalize();
+    //                     offset2 = offset2 + direction * 2;
+    //                 }
+
+    //                 goals.insert(turtle_id, (center + offset1, center + offset2));
+    //             }
+
+    //             // Move every turtle into a square for a start
+    //             let mut handles = Vec::new();
+    //             let mut index = 0;
+    //             planner.set_window(16);
+
+    //             for turtle_id in turtle_manager.iter_ids().await {
+    //                 let goal = Vector3::new(-31 + (index % 5) * 2, 56, center.z + (index / 5) * 2);
+
+    //                 println!("Setting initial goal for turtle {turtle_id} to {goal:?}");
+
+    //                 handles.push({
+    //                     let planner = planner.clone();
+    //                     let random_goal = *goals.get(&turtle_id).unwrap();
+
+    //                     async move {
+    //                         let _ = planner.path(turtle_id, goal).await;
+    //                         let _ = planner.path(turtle_id, random_goal.0).await;
+    //                         let _ = planner.path(turtle_id, goal).await;
+    //                     }
+    //                 });
+
+    //                 index += 1;
+    //             }
+
+    //             futures_util::future::join_all(handles).await;
+
+    //             // Face them all north
+    //             for turtle in turtle_manager.iter_turtles().await {
+    //                 let mut turtle_lock = turtle.lock().await;
+    //                 let _ = turtle_lock.face(Direction::NORTH).await;
+    //             }
+    //             tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+    //             // Move into LOSS formation
+    //             // let corner = Vector3::new(-31, 56, -1);
+    //             // let formation = [
+    //             //     "01000101010",
+    //             //     "01000101010",
+    //             //     "00000100000",
+    //             //     "11111111111",
+    //             //     "00000100000",
+    //             //     "01010101000",
+    //             //     "01010101011",
+    //             // ];
+    //             // let mut goal_list = Vec::new();
+    //             // for (row, line) in formation.iter().enumerate() {
+    //             //     for (col, ch) in line.chars().enumerate() {
+    //             //         if ch == '1' {
+    //             //             let offset = Vector3::new(col as i64, 0, row as i64);
+    //             //             goal_list.push(corner + offset);
+    //             //         }
+    //             //     }
+    //             // }
+    //             // let mut index = 0;
+    //             // for turtle_id in turtle_manager.iter_ids().await {
+    //             //     if index >= goal_list.len() {
+    //             //         break; // no more formation spots
+    //             //     }
+
+    //             //     let goal = goal_list[index];
+    //             //     println!("Setting initial goal for turtle {turtle_id} to {goal:?}");
+    //             //     planner.set_goal(turtle_id, goal);
+    //             //     index += 1;
+    //             // }
+    //             // planner.execute().await;
+    //             // tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+    //             // // Start a future action
+    //             // for (turtle_id, (goal1, _)) in goals.iter() {
+    //             //     println!("Setting goal for turtle {turtle_id} to {goal1:?}");
+    //             //     planner.set_goal(*turtle_id, *goal1);
+    //             // }
+    //             // planner.execute().await;
+    //             // for (turtle_id, (_, goal2)) in goals.iter() {
+    //             //     println!("Setting goal for turtle {turtle_id} to {goal2:?}");
+    //             //     planner.set_goal(*turtle_id, *goal2);
+    //             // }
+    //             // let results = planner.execute().await;
+
+    //             // for (i, result) in results.iter().enumerate() {
+    //             //     println!("Turtle {i} path: {result:?}");
+    //             // }
+    //             // if !results.is_empty() { 
+    //             //     println!();
+    //             // }
+
+    //             for turtle in turtle_manager.iter_turtles().await {
+    //                 // Make sure the turtle is valid
+    //                 {
+    //                     let turtle_lock = turtle.lock().await;
+
+    //                     if !turtle_lock.is_valid().await {
+    //                         turtles_to_remove.lock().await.insert(turtle_lock.get_id());
+    //                         continue;
+    //                     }
+    //                 }
+    //             }
+
+    //             {
+    //                 // Remove turtles marked as invalid
+    //                 let mut turtles_to_remove = turtles_to_remove.lock().await;
+        
+    //                 for i in turtles_to_remove.iter() {
+    //                     println!("Removing turtle {i}");
+    //                     turtle_manager.remove_turtle(*i).await;
+    //                     goals.remove(i);
+    //                 }
+        
+    //                 turtles_to_remove.clear();
+    //             }
+
+    //             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    //         }
+    //     }
+    // });
 
     // Main loop to accept incoming connections and spawn a new task for each one
     loop {
@@ -205,6 +220,7 @@ async fn main() {
         let block_manager = block_manager.clone();
         let turtle_manager = turtle_manager.clone();
         let client_manager = client_manager.clone();
+        let mut turtle_system = turtle_system.clone();
         let server_write_stream = gateway.get_sender();
 
         println!("New client connected from {}, determining type", addr);
@@ -227,6 +243,7 @@ async fn main() {
                                     Ok(turtle) => {
                                         let turtle = Arc::new(Mutex::new(turtle));
                                         turtle_manager.add_turtle(turtle).await;
+                                        turtle_system.start_turtle(new_turtle_id);
                                     }
                                     Err(e) => {
                                         eprintln!("Failed to initialize turtle. {e}");
